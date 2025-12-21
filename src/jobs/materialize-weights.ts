@@ -19,8 +19,7 @@ async function materializeWeights() {
       FROM snapshots s
       JOIN wallets w ON w.wallet = s.wallet
       WHERE
-        s.eligible = true
-        AND w.is_system_owned = true
+        w.is_system_owned = true
     ),
     durations AS (
       SELECT

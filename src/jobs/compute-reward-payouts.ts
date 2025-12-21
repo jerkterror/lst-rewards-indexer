@@ -98,7 +98,7 @@ async function computeRewardPayouts() {
         ON s.window_id = r.window_id
       WHERE r.reward_id = $2
         AND (
-          r.eligibility_mode = 'all_weights'
+          r.eligibility_mode = 'all_weighted'
           OR (
             r.eligibility_mode = 'eligible_only'
             AND EXISTS (

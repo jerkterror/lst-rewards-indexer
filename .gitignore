@@ -15,6 +15,9 @@ build/
 # Generated exports
 exports/
 
+# Keys
+keys/
+
 # OS / Editor
 .DS_Store
 Thumbs.db
