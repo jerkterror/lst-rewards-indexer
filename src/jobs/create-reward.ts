@@ -40,6 +40,21 @@ function computeCurrentWindowId(): string {
   return `${date.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
 }
 
+// Calculate number of weeks in range (inclusive)
+function getWeekCount(start: string, end: string): number {
+  // Parse YYYY-WNN format
+  const parseWeek = (w: string) => {
+    const [year, week] = w.split('-W').map(Number);
+    return year * 100 + week;
+  };
+
+  const startNum = parseWeek(start);
+  const endNum = parseWeek(end);
+
+  // Simple approximation - works for most cases within same year
+  return Math.abs(endNum - startNum) + 1;
+}
+
 // Prompt user for input
 async function prompt(question: string): Promise<string> {
   const rl = readline.createInterface({
@@ -60,7 +75,8 @@ async function listRewards() {
   const { rows } = await pool.query(`
     SELECT
       r.reward_id,
-      r.window_id,
+      r.window_start,
+      r.window_end,
       r.mint,
       r.total_amount,
       r.eligibility_mode,
@@ -82,7 +98,10 @@ async function listRewards() {
     console.log('No rewards configured yet');
   } else {
     for (const row of rows) {
-      console.log(`${row.reward_id.padEnd(20)} ${row.window_id.padEnd(12)} ${row.status.padEnd(12)} ${row.label || ''}`);
+      const windowDisplay = row.window_start === row.window_end
+        ? row.window_start
+        : `${row.window_start}-${row.window_end}`;
+      console.log(`${row.reward_id.padEnd(30)} ${windowDisplay.padEnd(20)} ${row.status.padEnd(12)} ${row.label || ''}`);
     }
   }
 
@@ -130,14 +149,36 @@ async function main() {
 
   const rawAmount = toRawAmount(amount, tokenInfo.decimals);
 
-  // Get window ID (default: current)
-  let windowId = args.window;
-  if (!windowId) {
+  // Get window range (default: current week only)
+  let windowStart = args['window-start'];
+  let windowEnd = args['window-end'];
+
+  if (!windowStart && !windowEnd) {
     const currentWindow = computeCurrentWindowId();
-    const useCurrentStr = await prompt(`Use current window ${currentWindow}? (Y/n): `);
-    windowId = useCurrentStr.toLowerCase() === 'n'
-      ? await prompt('Window ID (YYYY-WNN): ')
-      : currentWindow;
+    console.log(`\nWindow configuration:`);
+    console.log(`  1. Current week only (${currentWindow})`);
+    console.log(`  2. Custom range`);
+    const choice = await prompt('Choice [1]: ') || '1';
+
+    if (choice === '2') {
+      windowStart = await prompt('Start window (YYYY-WNN): ');
+      windowEnd = await prompt('End window (YYYY-WNN): ');
+    } else {
+      windowStart = currentWindow;
+      windowEnd = currentWindow;
+    }
+  } else if (windowStart && !windowEnd) {
+    // Only start provided, use it for both (single week)
+    windowEnd = windowStart;
+  } else if (!windowStart && windowEnd) {
+    // Only end provided, use it for both (single week)
+    windowStart = windowEnd;
+  }
+
+  // Validate window range
+  if (windowStart > windowEnd) {
+    console.error('❌ Invalid range: window-start must be <= window-end');
+    process.exit(1);
   }
 
   // Get eligibility mode (default: all-weighted)
@@ -196,14 +237,18 @@ async function main() {
   // Get label (optional)
   let label = args.label;
   if (!label) {
-    const defaultLabel = `${tokenSymbol} rewards - ${windowId}`;
+    const windowDisplay = windowStart === windowEnd ? windowStart : `${windowStart} to ${windowEnd}`;
+    const defaultLabel = `${tokenSymbol} rewards - ${windowDisplay}`;
     label = await prompt(`Label [${defaultLabel}]: `) || defaultLabel;
   }
 
   // Generate reward ID (or use provided one)
   let rewardId = args['reward-id'];
   if (!rewardId) {
-    const defaultRewardId = `${tokenSymbol}_${windowId.replace('-', '_')}`;
+    const windowPart = windowStart === windowEnd
+      ? windowStart.replace(/-/g, '_')
+      : `${windowStart.replace(/-/g, '_')}_to_${windowEnd.replace(/-/g, '_')}`;
+    const defaultRewardId = `${tokenSymbol}_${windowPart}`;
     rewardId = await prompt(`Reward ID [${defaultRewardId}]: `) || defaultRewardId;
   }
 
@@ -211,7 +256,10 @@ async function main() {
   console.log('\nReward Configuration Preview:');
   console.log('-'.repeat(80));
   console.log(`Reward ID:       ${rewardId}`);
-  console.log(`Window:          ${windowId}`);
+  const windowDisplay = windowStart === windowEnd
+    ? `${windowStart} (single week)`
+    : `${windowStart} to ${windowEnd} (${getWeekCount(windowStart, windowEnd)} weeks)`;
+  console.log(`Window Range:    ${windowDisplay}`);
   console.log(`Token:           ${tokenSymbol} (${tokenInfo.mint})`);
   console.log(`Amount:          ${amount} ${tokenSymbol} (${rawAmount} raw units)`);
   console.log(`Eligibility:     ${eligibilityMode.replace('_', '-')}`);
@@ -239,18 +287,20 @@ async function main() {
       `
       INSERT INTO reward_configs (
         reward_id,
-        window_id,
+        window_start,
+        window_end,
         mint,
         total_amount,
         eligibility_mode,
         eligibility_token_mint,
         eligibility_token_min_amount,
         label
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
       [
         rewardId,
-        windowId,
+        windowStart,
+        windowEnd,
         tokenInfo.mint,
         rawAmount.toString(),
         eligibilityMode,

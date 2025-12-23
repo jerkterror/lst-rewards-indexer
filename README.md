@@ -12,7 +12,7 @@ The pipeline is fully auditable, completely token-agnostic, and designed for hum
 
 - Snapshots any SPL token balances on a fixed cadence
 - Computes time-weighted stake per wallet
-- Normalizes stake into reward shares
+- Supports single-week or multi-week reward consolidation
 - Applies configurable eligibility rules per reward (optional)
 - Calculates dust-safe payout amounts
 - Exports CSVs for multisig execution
@@ -25,7 +25,7 @@ Nothing is ever sent on-chain automatically.
 ## High-Level Pipeline
 
 ```
-Snapshots → Weights → Shares → Reward Config → Payout Preview → CSV Export → Multisig Execution
+Snapshots → Weights → Reward Config (single/multi-week) → Payout Computation → CSV Export → Multisig Execution
 ```
 
 ## Repository Structure
@@ -45,7 +45,6 @@ lst-rewards-indexer/
 │       ├── create-reward.ts      # CLI tool for rewards
 │       ├── classify-wallets.ts
 │       ├── materialize-weights.ts
-│       ├── normalize-reward-shares.ts
 │       ├── compute-reward-payouts.ts
 │       └── export-reward-csv.ts
 ├── db/                           # Database schemas and migrations
@@ -118,8 +117,7 @@ Key tables:
 - `wallets` — discovered wallets + ownership classification
 - `snapshots` — append-only balance history
 - `weights` — time-weighted stake per window
-- `reward_shares` — normalized stake ratios
-- `reward_configs` — declarative reward definitions
+- `reward_configs` — declarative reward definitions (supports single or multi-week ranges)
 - `reward_payouts_preview` — computed payout amounts
 - `reward_dust_ledger` — explicit dust accounting
 
@@ -178,7 +176,6 @@ This automatically runs:
 1. Snapshot balances (optional)
 2. Classify wallets
 3. Materialize weights
-4. Normalize reward shares
 
 ---
 
@@ -238,17 +235,7 @@ Computes time-weighted stake exposure per window.
 
 ---
 
-#### 4. Normalize Shares
-
-```bash
-npx ts-node src/jobs/normalize-reward-shares.ts
-```
-
-Converts weights into normalized reward shares.
-
----
-
-### 5. Configure a Reward (CLI Tool)
+### 4. Configure a Reward (CLI Tool)
 
 Use the user-friendly CLI tool to create reward configurations:
 
@@ -256,17 +243,28 @@ Use the user-friendly CLI tool to create reward configurations:
 # Interactive mode (recommended for beginners)
 npx ts-node src/jobs/create-reward.ts
 
-# CLI mode (for scripting)
+# Single-week reward (CLI mode)
 npx ts-node src/jobs/create-reward.ts \
   --token ORE \
   --amount 7 \
-  --window 2025-W51 \
+  --window-start 2025-W51 \
+  --window-end 2025-W51 \
   --label "ORE rewards - week 51"
+
+# Multi-week consolidation (e.g., bi-weekly payout)
+npx ts-node src/jobs/create-reward.ts \
+  --token ORE \
+  --amount 28 \
+  --window-start 2025-W51 \
+  --window-end 2025-W52 \
+  --label "ORE rewards - weeks 51-52"
 
 # With eligibility requirement
 npx ts-node src/jobs/create-reward.ts \
   --token ORE \
   --amount 7 \
+  --window-start 2025-W51 \
+  --window-end 2025-W51 \
   --eligibility eligible-only \
   --eligibility-token ORE \
   --eligibility-amount 1
@@ -275,6 +273,8 @@ npx ts-node src/jobs/create-reward.ts \
 npx ts-node src/jobs/create-reward.ts \
   --token USDC \
   --amount 1000 \
+  --window-start 2025-W51 \
+  --window-end 2025-W51 \
   --eligibility all-weighted
 
 # List existing rewards
@@ -284,28 +284,37 @@ npx ts-node src/jobs/create-reward.ts --list
 npx ts-node src/jobs/create-reward.ts --token ORE --amount 7 --dry-run
 ```
 
+**Window Consolidation:**
+- Single-week: Set `--window-start` and `--window-end` to the same week
+- Multi-week: Specify different start and end weeks to consolidate multiple weeks into one payout
+- Benefits: Reduce multisig transaction overhead, batch bi-weekly or monthly rewards
+- The system aggregates time-weighted stakes across the entire window range
+
 **Supported eligibility modes:**
 - `all-weighted`: All token holders receive rewards proportional to stake
 - `eligible-only`: Only holders meeting eligibility requirements receive rewards
 
 ---
 
-### 6. Compute Payout Previews
+### 5. Compute Payout Previews
 
 ```bash
 npx ts-node src/jobs/compute-reward-payouts.ts
 ```
 
+- Aggregates time-weighted stakes across window ranges
 - Applies eligibility rules
 - Rounds conservatively
 - Records dust explicitly
 
 ---
 
-### 7. Export CSV for Execution
+### 6. Export CSV for Execution
 
 ```bash
-npx ts-node src/jobs/export-reward-csv.ts ORE_W51
+npx ts-node src/jobs/export-reward-csv.ts ORE_2025_W51
+# Or for multi-week:
+npx ts-node src/jobs/export-reward-csv.ts ORE_2025_W51_to_2025_W52
 ```
 
 Outputs a multisig-ready CSV in `exports/`.

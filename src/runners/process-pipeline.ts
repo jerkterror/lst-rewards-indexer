@@ -21,8 +21,7 @@ console.log('🚀 LST Rewards Pipeline Processor\n');
 console.log('This will run the data preparation pipeline:');
 console.log('  1. Snapshot balances (if needed)');
 console.log('  2. Classify wallets');
-console.log('  3. Materialize weights');
-console.log('  4. Normalize reward shares\n');
+console.log('  3. Materialize weights\n');
 
 async function classifyWallets() {
   console.log('\n📊 Step 2: Classifying Wallets...');
@@ -146,47 +145,6 @@ async function materializeWeights() {
   }
 }
 
-async function normalizeShares() {
-  console.log('\n📈 Step 4: Normalizing Reward Shares...');
-  console.log('━'.repeat(80));
-
-  const result = await pool.query(`
-    WITH totals AS (
-      SELECT
-        window_id,
-        SUM(weight) AS total_weight
-      FROM weights
-      GROUP BY window_id
-    )
-    INSERT INTO reward_shares (
-      window_id,
-      wallet,
-      share,
-      weight,
-      total_weight
-    )
-    SELECT
-      w.window_id,
-      w.wallet,
-      w.weight / t.total_weight AS share,
-      w.weight,
-      t.total_weight
-    FROM weights w
-    JOIN totals t
-      ON t.window_id = w.window_id
-    ON CONFLICT (window_id, wallet) DO NOTHING
-    RETURNING window_id, wallet, share;
-  `);
-
-  const count = result.rowCount ?? 0;
-  if (count > 0) {
-    const windows = [...new Set(result.rows.map(r => r.window_id))];
-    console.log(`✅ Normalized ${count} share entries for ${windows.length} window(s): ${windows.join(', ')}`);
-  } else {
-    console.log('✅ No new shares to normalize (already up to date)');
-  }
-}
-
 async function main() {
   try {
     // Step 1: Snapshot (optional)
@@ -205,15 +163,13 @@ async function main() {
     // Step 3: Materialize weights
     await materializeWeights();
 
-    // Step 4: Normalize shares
-    await normalizeShares();
-
     // Summary
     console.log('\n✅ Pipeline Complete!');
     console.log('━'.repeat(80));
     console.log('\nYour data is ready for reward configuration.');
     console.log('\nNext steps:');
     console.log('  1. Create reward: npx ts-node src/jobs/create-reward.ts');
+    console.log('     (Supports single-week or multi-week ranges with --window-start and --window-end)');
     console.log('  2. Compute payouts: npx ts-node src/jobs/compute-reward-payouts.ts');
     console.log('  3. Export CSV: npx ts-node src/jobs/export-reward-csv.ts <REWARD_ID>');
 
