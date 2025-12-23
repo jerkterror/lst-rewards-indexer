@@ -75,8 +75,8 @@ async function listRewards() {
     LIMIT 10
   `);
 
-  console.log('\n📋 Recent Rewards:');
-  console.log('━'.repeat(80));
+  console.log('\nRecent Rewards:');
+  console.log('-'.repeat(80));
 
   if (rows.length === 0) {
     console.log('No rewards configured yet');
@@ -86,7 +86,7 @@ async function listRewards() {
     }
   }
 
-  console.log('━'.repeat(80));
+  console.log('-'.repeat(80));
 }
 
 // Main function
@@ -99,7 +99,7 @@ async function main() {
     process.exit(0);
   }
 
-  console.log('\n🎁 Reward Configuration Tool\n');
+  console.log('\nReward Configuration Tool\n');
 
   // Get token symbol (required)
   let tokenSymbol = args.token;
@@ -110,7 +110,7 @@ async function main() {
 
   const tokenInfo = getTokenBySymbol(tokenSymbol);
   if (!tokenInfo) {
-    console.error(`❌ Unknown token: ${tokenSymbol}`);
+    console.error(`Unknown token: ${tokenSymbol}`);
     console.log('Known tokens:', Object.keys(KNOWN_TOKENS).join(', '));
     console.log('Or provide full mint address with --mint flag');
     process.exit(1);
@@ -124,7 +124,7 @@ async function main() {
 
   const amount = parseFloat(amountStr);
   if (isNaN(amount) || amount <= 0) {
-    console.error('❌ Invalid amount');
+    console.error('Invalid amount');
     process.exit(1);
   }
 
@@ -143,12 +143,16 @@ async function main() {
   // Get eligibility mode (default: all-weighted)
   let eligibilityMode = args.eligibility || args['eligibility-mode'];
   if (!eligibilityMode) {
-    const modeStr = await prompt('Eligibility mode (all-weighted / eligible-only) [all-weighted]: ');
-    eligibilityMode = modeStr || 'all-weighted';
+    const modeStr = await prompt('Eligibility mode - (a)ll-weighted / (e)ligible-only [a]: ');
+    if (modeStr.toLowerCase() === 'e') {
+      eligibilityMode = 'eligible-only';
+    } else {
+      eligibilityMode = 'all-weighted';
+    }
   }
 
   if (!['all-weighted', 'all_weighted', 'eligible-only', 'eligible_only'].includes(eligibilityMode)) {
-    console.error('❌ Invalid eligibility mode. Use "all-weighted" or "eligible-only"');
+    console.error('Invalid eligibility mode. Use "a" for all-weighted or "e" for eligible-only');
     process.exit(1);
   }
 
@@ -168,7 +172,7 @@ async function main() {
     if (eligTokenSymbol && eligTokenSymbol !== 'none') {
       const eligTokenInfo = getTokenBySymbol(eligTokenSymbol);
       if (!eligTokenInfo) {
-        console.error(`❌ Unknown eligibility token: ${eligTokenSymbol}`);
+        console.error(`Unknown eligibility token: ${eligTokenSymbol}`);
         process.exit(1);
       }
 
@@ -181,7 +185,7 @@ async function main() {
 
       const eligAmount = parseFloat(eligAmountStr);
       if (isNaN(eligAmount) || eligAmount < 0) {
-        console.error('❌ Invalid eligibility amount');
+        console.error('Invalid eligibility amount');
         process.exit(1);
       }
 
@@ -204,8 +208,8 @@ async function main() {
   }
 
   // Show preview
-  console.log('\n🎁 Reward Configuration Preview:');
-  console.log('━'.repeat(80));
+  console.log('\nReward Configuration Preview:');
+  console.log('-'.repeat(80));
   console.log(`Reward ID:       ${rewardId}`);
   console.log(`Window:          ${windowId}`);
   console.log(`Token:           ${tokenSymbol} (${tokenInfo.mint})`);
@@ -220,13 +224,13 @@ async function main() {
   }
 
   console.log(`Label:           ${label}`);
-  console.log('━'.repeat(80));
+  console.log('-'.repeat(80));
 
   // Confirm
   if (!args['dry-run']) {
-    const confirm = await prompt('\n✅ Create this reward? (y/N): ');
+    const confirm = await prompt('\nCreate this reward? (y/n): ');
     if (confirm.toLowerCase() !== 'y') {
-      console.log('❌ Cancelled');
+      console.log('Cancelled');
       process.exit(0);
     }
 
@@ -256,18 +260,18 @@ async function main() {
       ]
     );
 
-    console.log('\n✅ Reward created successfully!');
+    console.log('\nReward created successfully!');
     console.log(`\nNext steps:`);
     console.log(`  1. Run: npx ts-node src/jobs/compute-reward-payouts.ts`);
     console.log(`  2. Export: npx ts-node src/jobs/export-reward-csv.ts ${rewardId}`);
   } else {
-    console.log('\n✅ Dry run - no changes made');
+    console.log('\nDry run - no changes made');
   }
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Error:', e.message);
+    console.error('Error:', e.message);
     process.exit(1);
   })
   .finally(() => {
