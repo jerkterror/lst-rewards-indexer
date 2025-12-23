@@ -124,7 +124,8 @@ COMMENT ON COLUMN reward_shares.total_weight IS 'Sum of all weights for this win
 
 CREATE TABLE IF NOT EXISTS reward_configs (
     reward_id TEXT PRIMARY KEY,
-    window_id TEXT NOT NULL,
+    window_start TEXT NOT NULL,
+    window_end TEXT NOT NULL,
     mint TEXT NOT NULL,
     total_amount NUMERIC NOT NULL,
     eligibility_mode TEXT NOT NULL CHECK (eligibility_mode IN ('eligible_only', 'all_weighted')),
@@ -134,8 +135,11 @@ CREATE TABLE IF NOT EXISTS reward_configs (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_reward_configs_window
-    ON reward_configs(window_id);
+CREATE INDEX IF NOT EXISTS idx_reward_configs_window_start
+    ON reward_configs(window_start);
+
+CREATE INDEX IF NOT EXISTS idx_reward_configs_window_end
+    ON reward_configs(window_end);
 
 CREATE INDEX IF NOT EXISTS idx_reward_configs_mint
     ON reward_configs(mint);
@@ -143,9 +147,10 @@ CREATE INDEX IF NOT EXISTS idx_reward_configs_mint
 CREATE INDEX IF NOT EXISTS idx_reward_configs_created
     ON reward_configs(created_at);
 
-COMMENT ON TABLE reward_configs IS 'Reward distribution configurations defining how rewards are allocated';
-COMMENT ON COLUMN reward_configs.reward_id IS 'Unique identifier for this reward (e.g., ORE_W51_2025)';
-COMMENT ON COLUMN reward_configs.window_id IS 'ISO week identifier this reward applies to';
+COMMENT ON TABLE reward_configs IS 'Reward distribution configurations defining how rewards are allocated (supports single-week or multi-week ranges)';
+COMMENT ON COLUMN reward_configs.reward_id IS 'Unique identifier for this reward (e.g., ORE_W51_2025 or ORE_W51_W52_2025)';
+COMMENT ON COLUMN reward_configs.window_start IS 'ISO week identifier for range start (format: YYYY-WNN). For single-week rewards, set equal to window_end';
+COMMENT ON COLUMN reward_configs.window_end IS 'ISO week identifier for range end (format: YYYY-WNN). For single-week rewards, set equal to window_start';
 COMMENT ON COLUMN reward_configs.mint IS 'SPL token mint address for reward token';
 COMMENT ON COLUMN reward_configs.total_amount IS 'Total reward pool in raw token units (e.g., 7000000000 for 7 tokens with 9 decimals)';
 COMMENT ON COLUMN reward_configs.eligibility_mode IS 'eligible_only: only wallets meeting eligibility criteria, all_weighted: all wallets by stake weight';

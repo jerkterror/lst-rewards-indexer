@@ -8,7 +8,8 @@ async function computeRewardPayouts() {
   // Fetch all rewards in creation order
   const rewards = await pool.query<{
     reward_id: string;
-    window_id: string;
+    window_start: string;
+    window_end: string;
     mint: string;
     total_amount: string;
     eligibility_mode: 'eligible_only' | 'all_weighted';
@@ -17,7 +18,8 @@ async function computeRewardPayouts() {
   }>(`
     SELECT
       reward_id,
-      window_id,
+      window_start,
+      window_end,
       mint,
       total_amount,
       eligibility_mode,
@@ -75,11 +77,64 @@ async function computeRewardPayouts() {
     );
 
     // -----------------------------
-    // Compute payouts using effective total and per-reward eligibility
+    // Compute payouts by aggregating weights across window range
     // -----------------------------
+    const windowDisplay = reward.window_start === reward.window_end
+      ? reward.window_start
+      : `${reward.window_start}-${reward.window_end}`;
+
     const payouts = await pool.query<{
       payout_amount: string;
     }>(`
+      -- Aggregate weights across window range
+      WITH wallet_weights AS (
+        SELECT
+          w.wallet,
+          SUM(w.weight) as total_weight
+        FROM weights w
+        JOIN wallets wl ON wl.wallet = w.wallet
+        WHERE wl.is_system_owned = true
+          AND w.window_id >= $3  -- window_start
+          AND w.window_id <= $4  -- window_end
+        GROUP BY w.wallet
+      ),
+      -- Apply eligibility filter based on snapshots in the window range
+      eligible_wallets AS (
+        SELECT DISTINCT snap.wallet
+        FROM snapshots snap
+        WHERE snap.window_id >= $3
+          AND snap.window_id <= $4
+          AND (
+            -- No eligibility requirement = all wallets eligible
+            ($5::text IS NULL AND $6::numeric IS NULL)
+            OR
+            -- Check specific requirement
+            (
+              snap.eligibility_token_mint = $5
+              AND snap.eligibility_token_amount >= $6
+            )
+          )
+      ),
+      -- Compute total weight for share calculation
+      total_weight_sum AS (
+        SELECT SUM(total_weight) as grand_total
+        FROM wallet_weights ww
+        WHERE $7 = 'all_weighted'
+          OR ww.wallet IN (SELECT wallet FROM eligible_wallets)
+      ),
+      -- Compute shares
+      wallet_shares AS (
+        SELECT
+          ww.wallet,
+          ww.total_weight / tws.grand_total AS share
+        FROM wallet_weights ww
+        CROSS JOIN total_weight_sum tws
+        WHERE tws.grand_total > 0
+          AND (
+            $7 = 'all_weighted'
+            OR ww.wallet IN (SELECT wallet FROM eligible_wallets)
+          )
+      )
       INSERT INTO reward_payouts_preview (
         reward_id,
         window_id,
@@ -90,40 +145,26 @@ async function computeRewardPayouts() {
         payout_amount
       )
       SELECT
-        r.reward_id,
-        r.window_id,
-        s.wallet,
-        r.mint,
-        s.share,
-        $1::numeric AS total_amount,
-        FLOOR(s.share * $1::numeric) AS payout_amount
-      FROM reward_configs r
-      JOIN reward_shares s
-        ON s.window_id = r.window_id
-      WHERE r.reward_id = $2
-        AND (
-          r.eligibility_mode = 'all_weighted'
-          OR (
-            r.eligibility_mode = 'eligible_only'
-            AND (
-              -- If no eligibility requirement, all wallets are eligible
-              (r.eligibility_token_mint IS NULL AND r.eligibility_token_min_amount IS NULL)
-              OR
-              -- Check if wallet met the specific eligibility requirement
-              EXISTS (
-                SELECT 1
-                FROM snapshots snap
-                WHERE
-                  snap.wallet = s.wallet
-                  AND snap.window_id = r.window_id
-                  AND snap.eligibility_token_mint = r.eligibility_token_mint
-                  AND snap.eligibility_token_amount >= r.eligibility_token_min_amount
-              )
-            )
-          )
-        )
+        $1::text,
+        $8::text,  -- window_display
+        ws.wallet,
+        $9::text,  -- mint
+        ws.share,
+        $2::numeric,  -- effective_total
+        FLOOR(ws.share * $2::numeric) AS payout_amount
+      FROM wallet_shares ws
       RETURNING payout_amount
-    `, [effectiveTotal.toString(), reward.reward_id]);
+    `, [
+      reward.reward_id,           // $1
+      effectiveTotal.toString(),  // $2
+      reward.window_start,        // $3
+      reward.window_end,          // $4
+      reward.eligibility_token_mint,        // $5
+      reward.eligibility_token_min_amount,  // $6
+      reward.eligibility_mode,    // $7
+      windowDisplay,              // $8
+      reward.mint,                // $9
+    ]);
 
     // -----------------------------
     // Sum distributed amount
