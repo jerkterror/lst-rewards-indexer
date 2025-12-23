@@ -10,7 +10,7 @@ async function materializeWeights() {
       SELECT
         s.wallet,
         s.window_id,
-        s.amount,
+        s.primary_token_amount,
         s.ts,
         LEAD(s.ts) OVER (
           PARTITION BY s.wallet, s.window_id
@@ -25,7 +25,7 @@ async function materializeWeights() {
       SELECT
         wallet,
         window_id,
-        amount,
+        primary_token_amount,
         ts,
         COALESCE(next_ts, ts + INTERVAL '6 hours') AS end_ts,
         EXTRACT(EPOCH FROM (
@@ -37,7 +37,7 @@ async function materializeWeights() {
       SELECT
         wallet,
         window_id,
-        SUM(amount * seconds_held) AS raw_weight,
+        SUM(primary_token_amount * seconds_held) AS raw_weight,
         MAX(end_ts) AS last_ts
       FROM durations
       GROUP BY wallet, window_id

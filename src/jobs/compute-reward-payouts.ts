@@ -11,14 +11,18 @@ async function computeRewardPayouts() {
     window_id: string;
     mint: string;
     total_amount: string;
-    eligibility_mode: 'eligible_only' | 'all_weights';
+    eligibility_mode: 'eligible_only' | 'all_weighted';
+    eligibility_token_mint: string | null;
+    eligibility_token_min_amount: string | null;
   }>(`
     SELECT
       reward_id,
       window_id,
       mint,
       total_amount,
-      eligibility_mode
+      eligibility_mode,
+      eligibility_token_mint,
+      eligibility_token_min_amount
     FROM reward_configs
     ORDER BY created_at
   `);
@@ -71,7 +75,7 @@ async function computeRewardPayouts() {
     );
 
     // -----------------------------
-    // Compute payouts using effective total
+    // Compute payouts using effective total and per-reward eligibility
     // -----------------------------
     const payouts = await pool.query<{
       payout_amount: string;
@@ -101,13 +105,20 @@ async function computeRewardPayouts() {
           r.eligibility_mode = 'all_weighted'
           OR (
             r.eligibility_mode = 'eligible_only'
-            AND EXISTS (
-              SELECT 1
-              FROM snapshots snap
-              WHERE
-                snap.wallet = s.wallet
-                AND snap.window_id = r.window_id
-                AND snap.eligible = true
+            AND (
+              -- If no eligibility requirement, all wallets are eligible
+              (r.eligibility_token_mint IS NULL AND r.eligibility_token_min_amount IS NULL)
+              OR
+              -- Check if wallet met the specific eligibility requirement
+              EXISTS (
+                SELECT 1
+                FROM snapshots snap
+                WHERE
+                  snap.wallet = s.wallet
+                  AND snap.window_id = r.window_id
+                  AND snap.eligibility_token_mint = r.eligibility_token_mint
+                  AND snap.eligibility_token_amount >= r.eligibility_token_min_amount
+              )
             )
           )
         )

@@ -19,28 +19,62 @@ async function classifyWallets() {
 
   console.log(`Wallets to classify: ${rows.length}`);
 
-  for (const row of rows) {
-    const pubkey = new PublicKey(row.wallet);
+  if (rows.length === 0) {
+    console.log('No wallets to classify');
+    return;
+  }
 
-    const info = await connection.getAccountInfo(pubkey);
+  // OPTIMIZED: Batch RPC calls (100 wallets per call)
+  const BATCH_SIZE = 100;
+  const classifications: Array<{ wallet: string; isSystemOwned: boolean }> = [];
 
-    // If account does not exist, treat as non-system-owned
-    const isSystemOwned =
-      info !== null &&
-      info.owner.equals(SystemProgram.programId);
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE);
+    const pubkeys = batch.map(row => new PublicKey(row.wallet));
 
-    await pool.query(
-      `
-      UPDATE wallets
-      SET is_system_owned = $1
-      WHERE wallet = $2
-      `,
-      [isSystemOwned, row.wallet]
-    );
+    console.log(`Fetching account info for ${batch.length} wallets (batch ${Math.floor(i / BATCH_SIZE) + 1})...`);
 
-    console.log(
-      `${row.wallet} → ${isSystemOwned ? 'system-owned' : 'program-owned'}`
-    );
+    // Single batched RPC call for up to 100 wallets!
+    const accountInfos = await connection.getMultipleAccountsInfo(pubkeys);
+
+    for (let j = 0; j < batch.length; j++) {
+      const info = accountInfos[j];
+      const wallet = batch[j].wallet;
+
+      // If account does not exist, treat as non-system-owned
+      const isSystemOwned =
+        info !== null &&
+        info.owner.equals(SystemProgram.programId);
+
+      classifications.push({ wallet, isSystemOwned });
+
+      console.log(
+        `${wallet} → ${isSystemOwned ? 'system-owned' : 'program-owned'}`
+      );
+    }
+  }
+
+  // OPTIMIZED: Single batched database update
+  console.log(`Updating ${classifications.length} wallet classifications in database...`);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    for (const { wallet, isSystemOwned } of classifications) {
+      await client.query(
+        `UPDATE wallets SET is_system_owned = $1 WHERE wallet = $2`,
+        [isSystemOwned, wallet]
+      );
+    }
+
+    await client.query('COMMIT');
+    console.log('Database updated successfully');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
   }
 
   console.log('Wallet classification complete');
