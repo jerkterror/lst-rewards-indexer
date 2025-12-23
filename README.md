@@ -42,7 +42,7 @@ lst-rewards-indexer/
 │   │   ├── snapshot-runner.ts
 │   │   └── scheduler.ts
 │   └── jobs/                     # Batch jobs
-│       ├── create-reward.ts      # 🆕 CLI tool for rewards
+│       ├── create-reward.ts      # CLI tool for rewards
 │       ├── classify-wallets.ts
 │       ├── materialize-weights.ts
 │       ├── normalize-reward-shares.ts
