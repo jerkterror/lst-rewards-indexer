@@ -12,19 +12,27 @@ import { pool } from '../db';
 // Config / constants
 // ---------------------------
 const RPC_URL = process.env.SOLANA_RPC_URL!;
+const PRIMARY_TOKEN_MINT_STR = process.env.PRIMARY_TOKEN_MINT!;
+const PRIMARY_TOKEN_SYMBOL = process.env.PRIMARY_TOKEN_SYMBOL || 'PRIMARY';
+const ELIGIBILITY_TOKEN_MINT_STR = process.env.ELIGIBILITY_TOKEN_MINT;
+const ELIGIBILITY_TOKEN_SYMBOL = process.env.ELIGIBILITY_TOKEN_SYMBOL || 'ELIGIBILITY';
+const ELIGIBILITY_TOKEN_MIN_AMOUNT_STR = process.env.ELIGIBILITY_TOKEN_MIN_AMOUNT;
+
+// Validate required config
 if (!RPC_URL) throw new Error('Missing SOLANA_RPC_URL');
+if (!PRIMARY_TOKEN_MINT_STR) throw new Error('Missing PRIMARY_TOKEN_MINT');
 
 const connection = new Connection(RPC_URL, 'confirmed');
+const PRIMARY_TOKEN_MINT = new PublicKey(PRIMARY_TOKEN_MINT_STR);
 
-const INDIESOL_MINT = new PublicKey(
-  'L33mHftsNpaj39z1omnGbGbuA5eKqSsbmr91rjTod48'
-);
+// Optional: Eligibility token configuration
+const ELIGIBILITY_TOKEN_MINT = ELIGIBILITY_TOKEN_MINT_STR
+  ? new PublicKey(ELIGIBILITY_TOKEN_MINT_STR)
+  : null;
 
-const ORE_MINT = new PublicKey(
-  'oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp'
-);
-
-const ONE_ORE = 1n * 10n ** 9n;
+const ELIGIBILITY_TOKEN_MIN_AMOUNT = ELIGIBILITY_TOKEN_MIN_AMOUNT_STR
+  ? BigInt(ELIGIBILITY_TOKEN_MIN_AMOUNT_STR)
+  : 0n;
 
 function computeWindowId(ts: Date): string {
   const date = new Date(Date.UTC(
@@ -48,19 +56,19 @@ function computeWindowId(ts: Date): string {
 // ---------------------------
 // Types
 // ---------------------------
-type IndieSolHolder = {
+type TokenHolder = {
   wallet: string;
-  indiesolRaw: bigint;
+  primaryTokenAmount: bigint;
 };
 
-type HolderWithOre = IndieSolHolder & {
-  oreRaw: bigint;
+type HolderWithEligibility = TokenHolder & {
+  eligibilityTokenAmount: bigint | null;
 };
 
 // ---------------------------
 // Helpers
 // ---------------------------
-async function fetchIndieSolHolders(): Promise<IndieSolHolder[]> {
+async function fetchTokenHolders(): Promise<TokenHolder[]> {
   const accounts = await connection.getParsedProgramAccounts(
     TOKEN_PROGRAM_ID,
     {
@@ -69,7 +77,7 @@ async function fetchIndieSolHolders(): Promise<IndieSolHolder[]> {
         {
           memcmp: {
             offset: 0,
-            bytes: INDIESOL_MINT.toBase58(),
+            bytes: PRIMARY_TOKEN_MINT.toBase58(),
           },
         },
       ],
@@ -82,41 +90,36 @@ async function fetchIndieSolHolders(): Promise<IndieSolHolder[]> {
       const info = parsed.parsed.info;
       const amount = BigInt(info.tokenAmount.amount);
       return amount > 0n
-        ? { wallet: info.owner, indiesolRaw: amount }
+        ? { wallet: info.owner, primaryTokenAmount: amount }
         : null;
     })
-    .filter(Boolean) as IndieSolHolder[];
-}
-
-async function getOreBalance(wallet: string): Promise<bigint> {
-  const owner = new PublicKey(wallet);
-  const accounts = await connection.getParsedTokenAccountsByOwner(
-    owner,
-    { mint: ORE_MINT }
-  );
-
-  if (accounts.value.length === 0) return 0n;
-
-  const parsed =
-    accounts.value[0].account.data as ParsedAccountData;
-
-  return BigInt(parsed.parsed.info.tokenAmount.amount);
+    .filter(Boolean) as TokenHolder[];
 }
 
 /**
- * OPTIMIZED: Fetches ORE balances for multiple wallets in batches
+ * OPTIMIZED: Fetches eligibility token balances for multiple wallets in batches
  * This reduces 100+ RPC calls to just 1-2 batched calls
+ * Returns null balances if no eligibility token is configured
  */
-async function getOreBalancesBatched(
-  wallets: string[]
+async function getEligibilityBalancesBatched(
+  wallets: string[],
+  eligibilityMint: PublicKey | null
 ): Promise<Map<string, bigint>> {
   const balances = new Map<string, bigint>();
+
+  // If no eligibility token configured, return 0 for all wallets
+  if (!eligibilityMint) {
+    for (const wallet of wallets) {
+      balances.set(wallet, 0n);
+    }
+    return balances;
+  }
 
   // Derive all ATA addresses at once (no RPC calls needed!)
   const atas = wallets.map(wallet => ({
     wallet,
     ata: getAssociatedTokenAddressSync(
-      ORE_MINT,
+      eligibilityMint,
       new PublicKey(wallet),
       true // allowOwnerOffCurve
     ),
@@ -160,8 +163,9 @@ async function getOreBalancesBatched(
 
 async function persistSnapshot(
   wallet: string,
-  indiesolRaw: bigint,
-  oreRaw: bigint,
+  primaryTokenAmount: bigint,
+  eligibilityTokenAmount: bigint | null,
+  eligibilityTokenMint: string | null,
   eligible: boolean,
   windowId: string
 ) {
@@ -179,20 +183,20 @@ async function persistSnapshot(
     );
 
     await client.query(
-  `
-  INSERT INTO snapshots
-    (wallet, amount, ore_amount, eligible, window_id, ts)
-  VALUES ($1, $2, $3, $4, $5, NOW())
-  `,
-  [
-    wallet,
-    indiesolRaw.toString(),
-    oreRaw.toString(),
-    eligible,
-    windowId,
-  ]
-);
-
+      `
+      INSERT INTO snapshots
+        (wallet, primary_token_amount, eligibility_token_amount, eligibility_token_mint, eligible, window_id, ts)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      `,
+      [
+        wallet,
+        primaryTokenAmount.toString(),
+        eligibilityTokenAmount?.toString() || null,
+        eligibilityTokenMint,
+        eligible,
+        windowId,
+      ]
+    );
 
     await client.query('COMMIT');
   } catch (e) {
@@ -211,6 +215,13 @@ export async function runSnapshot(): Promise<void> {
   const windowId = computeWindowId(now);
 
   console.log(`Current reward window: ${windowId}`);
+  console.log(`Primary token: ${PRIMARY_TOKEN_SYMBOL} (${PRIMARY_TOKEN_MINT_STR})`);
+
+  if (ELIGIBILITY_TOKEN_MINT) {
+    console.log(`Eligibility token: ${ELIGIBILITY_TOKEN_SYMBOL} (min: ${ELIGIBILITY_TOKEN_MIN_AMOUNT})`);
+  } else {
+    console.log('No eligibility requirement configured');
+  }
 
   // ----------------------------------
   // Snapshot window guard (6 hours)
@@ -227,41 +238,62 @@ export async function runSnapshot(): Promise<void> {
     return;
   }
 
-  const holders = await fetchIndieSolHolders();
+  // Fetch all holders of the primary token
+  const holders = await fetchTokenHolders();
+  console.log(`${PRIMARY_TOKEN_SYMBOL} holders found: ${holders.length}`);
 
-  console.log(`Fetching ORE balances for ${holders.length} wallets (batched)...`);
+  // Fetch eligibility token balances (if configured)
+  let eligibilityBalances: Map<string, bigint> | null = null;
 
-  // OPTIMIZED: Single batched call instead of 100+ individual calls
-  const oreBalances = await getOreBalancesBatched(
-    holders.map(h => h.wallet)
-  );
+  if (ELIGIBILITY_TOKEN_MINT) {
+    console.log(`Fetching ${ELIGIBILITY_TOKEN_SYMBOL} balances for ${holders.length} wallets (batched)...`);
+    eligibilityBalances = await getEligibilityBalancesBatched(
+      holders.map(h => h.wallet),
+      ELIGIBILITY_TOKEN_MINT
+    );
+  }
 
-  const withOre: HolderWithOre[] = holders.map(h => ({
+  // Combine primary and eligibility data
+  const holdersWithEligibility: HolderWithEligibility[] = holders.map(h => ({
     ...h,
-    oreRaw: oreBalances.get(h.wallet) ?? 0n,
+    eligibilityTokenAmount: eligibilityBalances?.get(h.wallet) ?? null,
   }));
 
-  const eligible = withOre.filter(h => h.oreRaw >= ONE_ORE);
+  // Determine eligibility
+  const eligible = holdersWithEligibility.filter(h => {
+    if (!ELIGIBILITY_TOKEN_MINT || !ELIGIBILITY_TOKEN_MIN_AMOUNT) {
+      return true; // No eligibility requirement
+    }
+    return (h.eligibilityTokenAmount ?? 0n) >= ELIGIBILITY_TOKEN_MIN_AMOUNT;
+  });
 
-  console.log(`IndieSOL holders found: ${holders.length}`);
-  console.log(`Eligible wallets (>= 1 ORE): ${eligible.length}`);
-  console.table(
-    eligible.map(h => ({
-      wallet: h.wallet,
-      indiesol: h.indiesolRaw.toString(),
-      ore: h.oreRaw.toString(),
-    }))
-  );
+  console.log(`Eligible wallets: ${eligible.length}`);
 
-  for (const h of withOre) {
-  await persistSnapshot(
-    h.wallet,
-    h.indiesolRaw,
-    h.oreRaw,
-    h.oreRaw >= ONE_ORE,
-    windowId
-  );
-}
+  if (eligible.length > 0 && eligible.length <= 20) {
+    console.table(
+      eligible.map(h => ({
+        wallet: h.wallet,
+        [PRIMARY_TOKEN_SYMBOL]: h.primaryTokenAmount.toString(),
+        ...(ELIGIBILITY_TOKEN_MINT && {
+          [ELIGIBILITY_TOKEN_SYMBOL]: (h.eligibilityTokenAmount ?? 0n).toString(),
+        }),
+      }))
+    );
+  }
+
+  // Persist all snapshots
+  for (const h of holdersWithEligibility) {
+    const isEligible = eligible.some(e => e.wallet === h.wallet);
+
+    await persistSnapshot(
+      h.wallet,
+      h.primaryTokenAmount,
+      h.eligibilityTokenAmount,
+      ELIGIBILITY_TOKEN_MINT?.toBase58() || null,
+      isEligible,
+      windowId
+    );
+  }
 
   console.log('Snapshots written');
 }
