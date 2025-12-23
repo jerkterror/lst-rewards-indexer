@@ -44,6 +44,9 @@ lst-rewards-indexer/
 │       ├── normalize-reward-shares.ts
 │       ├── compute-reward-payouts.ts
 │       └── export-reward-csv.ts
+├── db/                           # Database schemas and migrations
+│   ├── schema.sql                # Full database schema
+│   └── drop-all-tables.sql       # Clean slate script
 ├── exports/                      # Generated CSVs (gitignored)
 ├── .env.example
 ├── .gitignore
@@ -96,6 +99,39 @@ Key tables:
 - `reward_dust_ledger` — explicit dust accounting
 
 All data is append-only or idempotent.
+
+---
+
+## Database Setup
+
+### Initial Setup
+
+Initialize the database schema using the provided SQL file:
+
+```bash
+# Using psql directly
+psql -d your_database_name -f db/schema.sql
+
+# Or with Docker (if using Docker PostgreSQL)
+docker cp db/schema.sql your-postgres-container:/tmp/schema.sql
+docker exec -i your-postgres-container psql -U postgres -d lst_rewards -f /tmp/schema.sql
+```
+
+### Reset Database (Fresh Start)
+
+To wipe all data and start fresh:
+
+```bash
+# Using psql directly
+psql -d your_database_name -f db/drop-all-tables.sql
+psql -d your_database_name -f db/schema.sql
+
+# Or with Docker
+docker cp db/drop-all-tables.sql your-postgres-container:/tmp/drop-all-tables.sql
+docker cp db/schema.sql your-postgres-container:/tmp/schema.sql
+docker exec -i your-postgres-container psql -U postgres -d lst_rewards -f /tmp/drop-all-tables.sql
+docker exec -i your-postgres-container psql -U postgres -d lst_rewards -f /tmp/schema.sql
+```
 
 ---
 
