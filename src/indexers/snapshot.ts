@@ -5,7 +5,7 @@ import {
   PublicKey,
   ParsedAccountData,
 } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { pool } from '../db';
 
 // ---------------------------
@@ -103,6 +103,61 @@ async function getOreBalance(wallet: string): Promise<bigint> {
   return BigInt(parsed.parsed.info.tokenAmount.amount);
 }
 
+/**
+ * OPTIMIZED: Fetches ORE balances for multiple wallets in batches
+ * This reduces 100+ RPC calls to just 1-2 batched calls
+ */
+async function getOreBalancesBatched(
+  wallets: string[]
+): Promise<Map<string, bigint>> {
+  const balances = new Map<string, bigint>();
+
+  // Derive all ATA addresses at once (no RPC calls needed!)
+  const atas = wallets.map(wallet => ({
+    wallet,
+    ata: getAssociatedTokenAddressSync(
+      ORE_MINT,
+      new PublicKey(wallet),
+      true // allowOwnerOffCurve
+    ),
+  }));
+
+  // Solana allows max 100 accounts per getMultipleAccountsInfo call
+  // So we batch in chunks of 100
+  const BATCH_SIZE = 100;
+
+  for (let i = 0; i < atas.length; i += BATCH_SIZE) {
+    const batch = atas.slice(i, i + BATCH_SIZE);
+    const ataAddresses = batch.map(item => item.ata);
+
+    // Single batched RPC call for up to 100 accounts!
+    const accountInfos = await connection.getMultipleAccountsInfo(ataAddresses);
+
+    // Parse each account
+    for (let j = 0; j < batch.length; j++) {
+      const accountInfo = accountInfos[j];
+      const { wallet } = batch[j];
+
+      if (!accountInfo) {
+        // Account doesn't exist = 0 balance
+        balances.set(wallet, 0n);
+        continue;
+      }
+
+      // Parse token account data
+      // Token account layout: first 64 bytes are mint(32) + owner(32)
+      // Amount is at bytes 64-72 (8 bytes, little-endian)
+      const data = accountInfo.data;
+      const amountBytes = data.slice(64, 72);
+      const amount = amountBytes.readBigUInt64LE(0);
+
+      balances.set(wallet, amount);
+    }
+  }
+
+  return balances;
+}
+
 async function persistSnapshot(
   wallet: string,
   indiesolRaw: bigint,
@@ -174,12 +229,17 @@ export async function runSnapshot(): Promise<void> {
 
   const holders = await fetchIndieSolHolders();
 
-  const withOre: HolderWithOre[] = await Promise.all(
-    holders.map(async h => ({
-      ...h,
-      oreRaw: await getOreBalance(h.wallet),
-    }))
+  console.log(`Fetching ORE balances for ${holders.length} wallets (batched)...`);
+
+  // OPTIMIZED: Single batched call instead of 100+ individual calls
+  const oreBalances = await getOreBalancesBatched(
+    holders.map(h => h.wallet)
   );
+
+  const withOre: HolderWithOre[] = holders.map(h => ({
+    ...h,
+    oreRaw: oreBalances.get(h.wallet) ?? 0n,
+  }));
 
   const eligible = withOre.filter(h => h.oreRaw >= ONE_ORE);
 
