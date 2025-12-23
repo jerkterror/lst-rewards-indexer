@@ -162,7 +162,49 @@ docker exec -i your-postgres-container psql -U postgres -d lst_rewards -f /tmp/s
 
 ## Running the Pipeline
 
-### 1. Snapshot Balances
+### Quick Start: Automated Pipeline (Recommended)
+
+Run the entire data preparation pipeline with one command:
+
+```bash
+# Full pipeline (snapshot + processing)
+npx ts-node src/runners/process-pipeline.ts
+
+# Or skip snapshot if cron already ran it
+npx ts-node src/runners/process-pipeline.ts --skip-snapshot
+```
+
+This automatically runs:
+1. Snapshot balances (optional)
+2. Classify wallets
+3. Materialize weights
+4. Normalize reward shares
+
+---
+
+### Production Workflow
+
+**For production with cron-based snapshots:**
+
+1. **Set up cron** to run snapshots every 6 hours:
+   ```bash
+   npx ts-node src/runners/scheduler.ts
+   ```
+
+2. **Process data** when ready to create rewards:
+   ```bash
+   npx ts-node src/runners/process-pipeline.ts --skip-snapshot
+   ```
+
+3. **Create and distribute rewards** (see sections below)
+
+---
+
+### Manual Steps (Advanced)
+
+If you need fine-grained control, run steps individually:
+
+#### 1. Snapshot Balances
 
 ```bash
 npx ts-node src/runners/snapshot-runner.ts
@@ -176,7 +218,7 @@ npx ts-node src/runners/scheduler.ts
 
 ---
 
-### 2. Classify Wallets
+#### 2. Classify Wallets
 
 ```bash
 npx ts-node src/jobs/classify-wallets.ts
@@ -186,17 +228,17 @@ Marks wallets as system-owned or program-owned.
 
 ---
 
-### 3. Compute Weights
+#### 3. Compute Weights
 
 ```bash
 npx ts-node src/jobs/materialize-weights.ts
 ```
 
-Computes time-weighted IndieSOL exposure per window.
+Computes time-weighted stake exposure per window.
 
 ---
 
-### 4. Normalize Shares
+#### 4. Normalize Shares
 
 ```bash
 npx ts-node src/jobs/normalize-reward-shares.ts
