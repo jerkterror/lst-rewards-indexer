@@ -223,20 +223,6 @@ export async function runSnapshot(): Promise<void> {
     console.log('No eligibility requirement configured');
   }
 
-  // ----------------------------------
-  // Snapshot window guard (6 hours)
-  // ----------------------------------
-  const recent = await pool.query(`
-    SELECT 1
-    FROM snapshots
-    WHERE ts >= NOW() - INTERVAL '6 hours'
-    LIMIT 1
-  `);
-
-  if ((recent.rowCount ?? 0) > 0) {
-    console.log('Snapshot already taken in last 6 hours, exiting');
-    return;
-  }
 
   // Fetch all holders of the primary token
   const holders = await fetchTokenHolders();

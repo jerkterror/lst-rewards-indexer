@@ -39,6 +39,7 @@ lst-rewards-indexer/
 │   ├── indexers/                 # On-chain indexing logic
 │   │   └── snapshot.ts
 │   ├── runners/                  # Entry points / schedulers
+|   |   |── process-pipeline.ts
 │   │   ├── snapshot-runner.ts
 │   │   └── scheduler.ts
 │   └── jobs/                     # Batch jobs
