@@ -286,13 +286,10 @@ pub struct ProcessClaim<'info> {
     )]
     pub recipient_token_account: Account<'info, TokenAccount>,
 
-    /// The operator or recipient can submit claims
-    #[account(
-        mut,
-        constraint = payer.key() == distribution.operator 
-            || payer.key() == recipient.key()
-            @ DistributorError::Unauthorized
-    )]
+    /// Anyone can submit claims (relayer pattern)
+    /// Security is provided by the Merkle proof - tokens always go to the
+    /// verified recipient regardless of who submits the transaction.
+    #[account(mut)]
     pub payer: Signer<'info>,
 
     pub token_program: Program<'info, Token>,
