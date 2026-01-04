@@ -161,8 +161,8 @@ export class MerkleRelayer {
       distributionIdBuffer
     );
 
-    // Get pending claims from database
-    const pendingClaims = await this.getPendingClaims(artifact.distributionId);
+    // Get pending claims from database, matched with artifact proofs
+    const pendingClaims = await this.getPendingClaims(artifact.distributionId, artifact);
 
     if (pendingClaims.length === 0) {
       console.log('No pending claims');
@@ -375,9 +375,12 @@ export class MerkleRelayer {
   }
 
   /**
-   * Get pending claims from database
+   * Get pending claims from database, matched with artifact proofs
    */
-  private async getPendingClaims(distributionId: string): Promise<MerkleProof[]> {
+  private async getPendingClaims(
+    distributionId: string,
+    artifact: DistributionArtifact
+  ): Promise<MerkleProof[]> {
     const { rows } = await pool.query<{
       leaf_index: number;
       wallet: string;
@@ -394,10 +397,13 @@ export class MerkleRelayer {
       [distributionId, this.config.maxRetries]
     );
 
-    // Match with artifact proofs
-    const result: MerkleProof[] = [];
-    // This would need the artifact's proofs - for now return from DB
-    // In practice, you'd load the artifact and match indices
+    // Create a map of pending claim indices for quick lookup
+    const pendingIndices = new Set(rows.map((r) => r.leaf_index));
+
+    // Match with artifact proofs to get the full proof data
+    const result: MerkleProof[] = artifact.proofs.filter(
+      (proof) => pendingIndices.has(proof.index)
+    );
 
     return result;
   }
