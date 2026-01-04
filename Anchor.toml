@@ -12,7 +12,7 @@ merkle_distributor = "11111111111111111111111111111111"
 merkle_distributor = "8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4"
 
 [programs.mainnet]
-merkle_distributor = "11111111111111111111111111111111"
+merkle_distributor = "8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4"
 
 [registry]
 url = "https://api.apr.dev"
