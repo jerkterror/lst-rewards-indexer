@@ -12,11 +12,21 @@ yarn-error.log*
 dist/
 build/
 
+# Anchor / Solana build artifacts
+target/
+programs/*/target/
+.anchor/
+test-ledger/
+
 # Generated exports
 exports/
 
-# Keys
+# Generated Merkle distributions (contains proofs - may want to track selectively)
+distributions/
+
+# Keys (NEVER commit)
 keys/
+*.json.bak
 
 # OS / Editor
 .DS_Store
@@ -29,3 +39,7 @@ Thumbs.db
 
 # Docker
 *.pid
+
+# Cargo
+Cargo.lock
+**/*.rs.bk

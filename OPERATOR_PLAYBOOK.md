@@ -695,7 +695,200 @@ GROUP BY wallet;
 
 ---
 
+## Merkle Distribution System (Scalable Payouts)
+
+The Merkle distribution system provides a more scalable alternative to the direct Squads multisig payouts. Instead of creating N transfer proposals (one per batch of ~6 recipients), the multisig approves a single Merkle root that commits to the entire payout list.
+
+### Benefits
+
+| Traditional Multisig | Merkle Distribution |
+|---------------------|---------------------|
+| N proposals for N/6 batches | 2 proposals total |
+| O(N) signing overhead | O(1) signing overhead |
+| Limited to ~100 recipients | Scales to 1000+ recipients |
+| Each signer reviews many txs | Signers review summary + root |
+
+### Architecture
+
+```
+Existing Pipeline (unchanged)
+├── Snapshots → Weights → Shares → Reward Config → Payouts → CSV
+
+New Execution Layer
+├── CSV Export
+├── Merkle Builder (generates root + proofs)
+├── Multisig approves:
+│   ├── Initialize distribution (root commitment)
+│   └── Fund vault (transfer tokens)
+├── Relayer executes claims (untrusted, batched)
+└── Optional clawback of remaining funds
+```
+
+### Workflow
+
+#### Step 1: Build Merkle Distribution Artifact
+
+After generating the payout CSV, build the Merkle tree:
+
+```bash
+npx ts-node src/jobs/build-merkle-distribution.ts exports/ORE_W52.csv
+```
+
+This creates:
+- `distributions/ORE_W52_merkle.json` — Contains Merkle root and proofs
+- Database record in `merkle_distributions` table
+
+#### Step 2: Initialize via Multisig
+
+Create multisig proposals to fund and initialize the distribution:
+
+```bash
+npx ts-node src/jobs/init-merkle-distribution.ts distributions/ORE_W52_merkle.json
+```
+
+This creates two Squads proposals:
+1. **Initialize Distribution** — Sets the Merkle root on-chain
+2. **Fund Vault** — Transfers tokens to the distribution vault
+
+#### Step 3: Approve and Execute Proposals
+
+In the Squads UI:
+1. Review the distribution summary (reward ID, amount, recipient count)
+2. Verify the Merkle root matches the artifact
+3. Approve and execute both proposals
+
+#### Step 4: Run Relayer
+
+Process claims with the relayer:
+
+```bash
+npx ts-node src/jobs/run-merkle-relayer.ts distributions/ORE_W52_merkle.json
+```
+
+The relayer:
+- Submits claims in batches (configurable size)
+- Creates recipient ATAs as needed
+- Handles retries for failed transactions
+- Tracks progress in database
+
+### Environment Variables
+
+```env
+# Required for Merkle distributions
+MERKLE_PROGRAM_ID=8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4
+RELAYER_KEYPAIR=./keys/relayer.json
+
+# Optional relayer tuning
+RELAYER_BATCH_SIZE=5
+RELAYER_MAX_RETRIES=3
+RELAYER_RETRY_DELAY=2000
+RELAYER_COMPUTE_UNITS=400000
+RELAYER_COMPUTE_PRICE=1000
+```
+
+### Deployed Program
+
+| Network | Program ID | Status |
+|---------|------------|--------|
+| Devnet | `8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4` | ✅ Deployed |
+| Mainnet | TBD | Pending |
+
+### Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `merkle_distributions` | Distribution configs, Merkle roots, status |
+| `merkle_claims` | Per-recipient claim tracking |
+| `merkle_relayer_batches` | Batch submission history |
+
+Run the schema migration:
+```bash
+psql -d lst_rewards -f db/merkle-schema.sql
+```
+
+### Monitoring Queries
+
+**Distribution Progress:**
+```sql
+SELECT * FROM merkle_distribution_summary;
+```
+
+**Pending Claims:**
+```sql
+SELECT * FROM merkle_pending_claims WHERE distribution_id = 'YOUR_ID';
+```
+
+**Claim Statistics:**
+```sql
+SELECT
+  distribution_id,
+  status,
+  COUNT(*) as count,
+  SUM(amount::numeric) as total_amount
+FROM merkle_claims
+GROUP BY distribution_id, status
+ORDER BY distribution_id, status;
+```
+
+### Security Model
+
+1. **Custody** — Tokens remain in multisig vault until funding
+2. **Commitment** — Merkle root is cryptographic commitment to exact payouts
+3. **Replay Protection** — Each claim can only be processed once (claim PDAs)
+4. **Relayer Trust** — Relayer is untrusted; cannot steal funds or modify amounts
+5. **Clawback** — Authority can recover unclaimed funds after distribution period
+
+### Testing on Devnet
+
+Use the end-to-end test script to verify the system works before mainnet:
+
+```bash
+# Create a test CSV with devnet token addresses
+# Example: exports/DEV_TEST.csv
+
+# Run full test (initializes, funds, and processes all claims)
+npx ts-node src/jobs/test-merkle-devnet.ts exports/DEV_TEST.csv
+```
+
+The test script performs:
+1. Database setup (creates reward config)
+2. Builds Merkle distribution artifact
+3. Initializes distribution on-chain
+4. Funds the vault
+5. Processes all claims
+6. Verifies recipient balances
+
+**Required for devnet testing:**
+- `SOLANA_RPC_URL` pointing to devnet (e.g., `https://api.devnet.solana.com`)
+- `RELAYER_KEYPAIR` with devnet SOL for fees
+- Test SPL tokens minted and held by the relayer wallet
+
+### Troubleshooting
+
+**"Invalid Merkle proof" error:**
+- Ensure artifact matches deployed distribution
+- Verify distribution ID consistency
+- Check that the on-chain Merkle root matches the artifact (may need fresh distribution)
+
+**"DeclaredProgramIdMismatch" error:**
+- The deployed program binary doesn't match the `declare_id!` in source
+- Rebuild with `anchor build` and upgrade with `anchor upgrade`
+
+**Claims failing:**
+- Check relayer has sufficient SOL for fees
+- Verify recipient wallet is valid Solana address
+- Check vault has sufficient token balance
+
+**Slow processing:**
+- Increase `RELAYER_BATCH_SIZE` (max ~8 due to tx size)
+- Reduce `RELAYER_RETRY_DELAY` for faster retries
+- Use dedicated RPC for better throughput
+
+---
+
 ## Quick Reference: Full Reward Distribution Workflow
+
+### Option A: Traditional Squads Multisig (Small Distributions)
 
 ```bash
 # 1. Run pipeline to collect and process data
@@ -710,7 +903,94 @@ npx ts-node src/jobs/compute-reward-payouts.ts
 # 4. Export CSV
 npx ts-node src/jobs/export-reward-csv.ts ORE_2025_W52
 
-# 5. (Optional) Create Squads proposals
+# 5. Create Squads proposals (batched transfers)
 npx ts-node src/jobs/squads-create-payout-proposals.ts exports/ORE_2025_W52.csv
 ```
+
+### Option B: Merkle Distribution (Large Distributions, 100+ recipients)
+
+```bash
+# 1. Run pipeline to collect and process data
+npx ts-node src/runners/process-pipeline.ts
+
+# 2. Create reward configuration
+npx ts-node src/jobs/create-reward.ts --token ORE --amount 7
+
+# 3. Compute payouts
+npx ts-node src/jobs/compute-reward-payouts.ts
+
+# 4. Export CSV
+npx ts-node src/jobs/export-reward-csv.ts ORE_2025_W52
+
+# 5. Build Merkle distribution
+npx ts-node src/jobs/build-merkle-distribution.ts exports/ORE_2025_W52.csv
+
+# 6. Create multisig proposals (init + fund)
+npx ts-node src/jobs/init-merkle-distribution.ts distributions/ORE_2025_W52_merkle.json
+
+# 7. Approve proposals in Squads UI
+
+# 8. Run relayer to process claims
+npx ts-node src/jobs/run-merkle-relayer.ts distributions/ORE_2025_W52_merkle.json
+```
+
+---
+
+## Building and Deploying the Merkle Program
+
+If you need to deploy or upgrade the on-chain program:
+
+### Prerequisites (WSL/Linux recommended)
+
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install Solana CLI
+sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+
+# Install Anchor CLI
+cargo install --git https://github.com/coral-xyz/anchor avm --force
+avm install 0.31.0
+avm use 0.31.0
+```
+
+### Build the Program
+
+```bash
+cd /path/to/lst-rewards-indexer
+anchor build
+
+# Copy build artifacts (Anchor places them in program subdirectory)
+mkdir -p target/deploy
+cp programs/merkle-distributor/target/deploy/merkle_distributor.so target/deploy/
+cp programs/merkle-distributor/target/deploy/merkle_distributor-keypair.json target/deploy/
+```
+
+### Deploy (New Installation)
+
+```bash
+# Configure for devnet
+solana config set --url devnet
+
+# Ensure deployer has SOL
+solana balance
+
+# Deploy
+anchor deploy
+```
+
+### Upgrade (Existing Deployment)
+
+```bash
+anchor upgrade target/deploy/merkle_distributor.so --program-id <PROGRAM_ID>
+```
+
+### Important: Back Up Your Keypairs!
+
+After deployment, back up these files securely:
+- `target/deploy/merkle_distributor-keypair.json` (program keypair)
+- `keys/id.json` (upgrade authority - can upgrade the program)
+
+**Loss of the upgrade authority keypair means you cannot upgrade the program.**
 

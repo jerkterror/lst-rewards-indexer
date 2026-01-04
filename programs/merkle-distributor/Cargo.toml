@@ -1,0 +1,23 @@
+[package]
+name = "merkle-distributor"
+version = "0.1.0"
+description = "Merkle-based SPL token distribution program for L33 rewards"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "merkle_distributor"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = "0.31.0"
+anchor-spl = "0.31.0"
+hex = "0.4"
+

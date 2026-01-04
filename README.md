@@ -17,8 +17,16 @@ The pipeline is fully auditable, completely token-agnostic, and designed for hum
 - Calculates dust-safe payout amounts
 - Exports CSVs for multisig execution
 - **User-friendly CLI** for reward configuration
+- **Merkle distribution system** for scalable payouts (1000+ recipients)
 
-Nothing is ever sent on-chain automatically.
+### Distribution Options
+
+| Method | Best For | Multisig Overhead |
+|--------|----------|-------------------|
+| Direct Squads Transfers | <100 recipients | N proposals (batches of 6) |
+| **Merkle Distribution** | 100+ recipients | 2 proposals total |
+
+The Merkle distribution system uses an on-chain Anchor program to verify cryptographic proofs, enabling efficient distribution to thousands of recipients with minimal multisig signing overhead.
 
 ---
 
@@ -39,23 +47,42 @@ lst-rewards-indexer/
 │   ├── indexers/                 # On-chain indexing logic
 │   │   └── snapshot.ts
 │   ├── runners/                  # Entry points / schedulers
-|   |   |── process-pipeline.ts
+│   │   ├── process-pipeline.ts
 │   │   ├── snapshot-runner.ts
 │   │   └── scheduler.ts
+│   ├── merkle/                   # Merkle distribution system
+│   │   ├── types.ts              # Type definitions
+│   │   ├── tree.ts               # Merkle tree construction
+│   │   ├── builder.ts            # Distribution artifact builder
+│   │   └── relayer.ts            # Claim submission relayer
 │   └── jobs/                     # Batch jobs
 │       ├── create-reward.ts      # CLI tool for rewards
 │       ├── classify-wallets.ts
 │       ├── materialize-weights.ts
 │       ├── compute-reward-payouts.ts
-│       └── export-reward-csv.ts
+│       ├── export-reward-csv.ts
+│       ├── build-merkle-distribution.ts    # Build Merkle artifacts
+│       ├── init-merkle-distribution.ts     # Create multisig proposals
+│       ├── run-merkle-relayer.ts           # Process claims
+│       └── test-merkle-devnet.ts           # End-to-end devnet test
+├── programs/                     # On-chain Anchor programs
+│   └── merkle-distributor/       # Merkle distribution program
+│       ├── src/lib.rs            # Program logic
+│       ├── Cargo.toml
+│       └── README.md
 ├── db/                           # Database schemas and migrations
-│   ├── schema.sql                # Full database schema
+│   ├── schema.sql                # Core database schema
+│   ├── merkle-schema.sql         # Merkle distribution tables
 │   └── drop-all-tables.sql       # Clean slate script
+├── distributions/                # Generated Merkle artifacts (gitignored)
 ├── exports/                      # Generated CSVs (gitignored)
+├── keys/                         # Keypairs (gitignored, NEVER commit)
+├── Anchor.toml                   # Anchor workspace config
 ├── .env.example
 ├── .gitignore
 ├── package.json
 ├── tsconfig.json
+├── OPERATOR_PLAYBOOK.md          # Detailed operator guide
 └── README.md
 ```
 
@@ -98,6 +125,10 @@ SQUADS_MEMBER_KEYPAIR=
 
 # Optional
 MAX_TRANSFERS_PER_TX=6
+
+# Merkle Distribution (optional - for scalable payouts)
+MERKLE_PROGRAM_ID=8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4
+RELAYER_KEYPAIR=./keys/relayer.json
 ```
 
 **Configuration Notes:**
@@ -336,11 +367,45 @@ No silent loss and no overpayment.
 
 This system **does not**:
 
-- Sign transactions
-- Move funds automatically
+- Sign transactions automatically
+- Move funds without multisig approval
 - Encode governance decisions in code
 
-Execution is performed separately via a Squads multisig using the exported CSVs.
+### Two Execution Paths
+
+**Option A: Direct Squads Transfers** (small distributions)
+- Export CSV → Create batched transfer proposals → Multisig approves → Funds sent
+
+**Option B: Merkle Distribution** (large distributions, 100+ recipients)
+- Export CSV → Build Merkle tree → Multisig approves root + funds vault → Relayer processes claims
+
+See `OPERATOR_PLAYBOOK.md` for detailed instructions on both methods.
+
+---
+
+## Merkle Distribution Quick Start
+
+For distributions with many recipients, the Merkle system is more efficient:
+
+```bash
+# 1. Build Merkle distribution from CSV
+npx ts-node src/jobs/build-merkle-distribution.ts exports/ORE_2025_W52.csv
+
+# 2. Create multisig proposals (init + fund)
+npx ts-node src/jobs/init-merkle-distribution.ts distributions/ORE_2025_W52_merkle.json
+
+# 3. Approve proposals in Squads UI
+
+# 4. Run relayer to process claims
+npx ts-node src/jobs/run-merkle-relayer.ts distributions/ORE_2025_W52_merkle.json
+```
+
+### Deployed Program
+
+| Network | Program ID |
+|---------|------------|
+| Devnet | `8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4` |
+| Mainnet | TBD |
 
 ---
 

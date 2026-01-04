@@ -1,0 +1,3 @@
+# Force v3 lockfile format for Anchor compatibility
+[lockfile]
+version = 3
