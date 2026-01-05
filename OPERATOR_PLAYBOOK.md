@@ -779,19 +779,23 @@ MERKLE_PROGRAM_ID=8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4
 RELAYER_KEYPAIR=./keys/relayer.json
 
 # Optional relayer tuning
-RELAYER_BATCH_SIZE=5
+RELAYER_BATCH_SIZE=1        # Use 1 for large proofs (tx size limit)
 RELAYER_MAX_RETRIES=3
 RELAYER_RETRY_DELAY=2000
 RELAYER_COMPUTE_UNITS=400000
 RELAYER_COMPUTE_PRICE=1000
 ```
 
+**Note:** `RELAYER_BATCH_SIZE` should be set to `1` for distributions with many recipients, as Merkle proofs are large and can exceed Solana's 1232-byte transaction size limit.
+
 ### Deployed Program
 
 | Network | Program ID | Status |
 |---------|------------|--------|
-| Devnet | `8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4` | ✅ Deployed |
-| Mainnet | TBD | Pending |
+| **Mainnet** | `8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4` | ✅ Production |
+| Devnet | `8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4` | ✅ Testing |
+
+**Explorer:** [View on Solscan](https://solscan.io/account/8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4)
 
 ### Database Tables
 
@@ -938,6 +942,19 @@ npx ts-node src/jobs/run-merkle-relayer.ts distributions/ORE_2025_W52_merkle.jso
 
 ## Building and Deploying the Merkle Program
 
+### Current Deployment Status
+
+| Network | Program ID | IDL | Status |
+|---------|------------|-----|--------|
+| **Mainnet** | `8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4` | ✅ Published | Production |
+| Devnet | `8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4` | ✅ Published | Testing |
+
+**Explorer:** [View on Solscan](https://solscan.io/account/8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4)
+
+**Upgrade Authority:** `3smkPvNBjbeh4KSnwqVWGK2Pk9MeW6ShHXj5YKf3r8Wg`
+
+---
+
 If you need to deploy or upgrade the on-chain program:
 
 ### Prerequisites (WSL/Linux recommended)
@@ -959,38 +976,82 @@ avm use 0.31.0
 
 ```bash
 cd /path/to/lst-rewards-indexer
+
+# Clean build to ensure fresh artifacts
+anchor clean
 anchor build
 
-# Copy build artifacts (Anchor places them in program subdirectory)
-mkdir -p target/deploy
-cp programs/merkle-distributor/target/deploy/merkle_distributor.so target/deploy/
-cp programs/merkle-distributor/target/deploy/merkle_distributor-keypair.json target/deploy/
+# Verify the build output exists
+ls -la programs/merkle-distributor/target/deploy/merkle_distributor.so
 ```
+
+**Note:** The correct `.so` file is in `programs/merkle-distributor/target/deploy/`, not the root `target/deploy/`.
 
 ### Deploy (New Installation)
 
 ```bash
-# Configure for devnet
-solana config set --url devnet
+# Set network
+solana config set --url mainnet-beta  # or devnet
 
-# Ensure deployer has SOL
+# Ensure deployer has SOL (~2.5 SOL needed temporarily for buffer, ~0.1 SOL kept for rent)
 solana balance
 
+# Copy your deployer keypair to the Solana config location
+cp ./keys/id.json ~/.config/solana/id.json
+
+# Verify address
+solana address
+
 # Deploy
-anchor deploy
+anchor deploy --provider.cluster mainnet --provider.wallet ./keys/id.json
 ```
 
 ### Upgrade (Existing Deployment)
 
+Program upgrades require ~2 SOL temporary deposit (returned after upgrade):
+
 ```bash
-anchor upgrade target/deploy/merkle_distributor.so --program-id <PROGRAM_ID>
+# Ensure your keypair is the upgrade authority
+solana address  # Should match the upgrade authority
+
+# Upgrade using solana program deploy (handles buffer automatically)
+solana program deploy programs/merkle-distributor/target/deploy/merkle_distributor.so \
+  --program-id 8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4 \
+  --url mainnet-beta
+
+# Verify upgrade succeeded
+solana program show 8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4 --url mainnet-beta
+```
+
+### Publish/Update IDL
+
+After deployment or upgrade, publish the IDL for explorer decoding:
+
+```bash
+# Initial publish
+anchor idl init 8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4 \
+  --filepath target/idl/merkle_distributor.json \
+  --provider.cluster mainnet \
+  --provider.wallet ./keys/id.json
+
+# Update after program changes
+anchor idl upgrade 8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4 \
+  --filepath target/idl/merkle_distributor.json \
+  --provider.cluster mainnet \
+  --provider.wallet ./keys/id.json
 ```
 
 ### Important: Back Up Your Keypairs!
 
 After deployment, back up these files securely:
-- `target/deploy/merkle_distributor-keypair.json` (program keypair)
+- `target/deploy/merkle_distributor-keypair.json` (program keypair - determines program ID)
 - `keys/id.json` (upgrade authority - can upgrade the program)
 
 **Loss of the upgrade authority keypair means you cannot upgrade the program.**
+
+### Upgrade Cost Notes
+
+- **Net cost:** ~0.01 SOL (transaction fees only)
+- **Temporary deposit:** ~2.1 SOL (returned immediately after upgrade)
+- You need to have the full deposit amount available, but you get it back
 

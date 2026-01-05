@@ -402,10 +402,12 @@ npx ts-node src/jobs/run-merkle-relayer.ts distributions/ORE_2025_W52_merkle.jso
 
 ### Deployed Program
 
-| Network | Program ID |
-|---------|------------|
-| Devnet | `8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4` |
-| Mainnet | TBD |
+| Network | Program ID | IDL |
+|---------|------------|-----|
+| Mainnet | `8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4` | ✅ Published |
+| Devnet | `8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4` | ✅ Published |
+
+**Explorer:** [View on Solscan](https://solscan.io/account/8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4)
 
 ---
 
