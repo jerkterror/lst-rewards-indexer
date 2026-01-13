@@ -20,7 +20,7 @@ function parseArgs(): Record<string, string> {
   return args;
 }
 
-// Compute current ISO week window ID
+// Compute current ISO week window ID (weeks start Wednesday 00:00 UTC)
 function computeCurrentWindowId(): string {
   const now = new Date();
   const date = new Date(Date.UTC(
@@ -28,6 +28,9 @@ function computeCurrentWindowId(): string {
     now.getUTCMonth(),
     now.getUTCDate()
   ));
+
+  // Shift back 2 days so weeks start on Wednesday instead of Monday
+  date.setUTCDate(date.getUTCDate() - 2);
 
   const dayNum = date.getUTCDay() || 7;
   date.setUTCDate(date.getUTCDate() + 4 - dayNum);

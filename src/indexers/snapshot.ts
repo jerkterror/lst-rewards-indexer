@@ -41,6 +41,9 @@ function computeWindowId(ts: Date): string {
     ts.getUTCDate()
   ));
 
+  // Shift back 2 days so weeks start on Wednesday instead of Monday
+  date.setUTCDate(date.getUTCDate() - 2);
+
   // ISO week calculation
   const dayNum = date.getUTCDay() || 7;
   date.setUTCDate(date.getUTCDate() + 4 - dayNum);
