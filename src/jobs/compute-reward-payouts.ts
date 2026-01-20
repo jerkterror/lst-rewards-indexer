@@ -1,9 +1,33 @@
 // src/jobs/compute-reward-payouts.ts
 import 'dotenv/config';
 import { pool } from '../db';
+import { getIgnoredWalletsArray } from '../api/queries/ignored-wallets';
+
+/**
+ * Build SQL clause and params for excluding ignored wallets
+ */
+function buildIgnoreFilter(ignoredWallets: string[], startParam: number): {
+  clause: string;
+  params: string[];
+} {
+  if (ignoredWallets.length === 0) {
+    return { clause: '', params: [] };
+  }
+  const placeholders = ignoredWallets.map((_, i) => `$${startParam + i}`).join(', ');
+  return {
+    clause: `AND w.wallet NOT IN (${placeholders})`,
+    params: ignoredWallets,
+  };
+}
 
 async function computeRewardPayouts() {
   console.log('Computing reward payout previews (with dust carry-forward)...');
+
+  // Get ignored wallets - these are excluded from all payout calculations
+  const ignoredWallets = getIgnoredWalletsArray();
+  if (ignoredWallets.length > 0) {
+    console.log(`Excluding ${ignoredWallets.length} ignored wallet(s) from payouts`);
+  }
 
   // Fetch all rewards in creation order
   const rewards = await pool.query<{
@@ -83,10 +107,13 @@ async function computeRewardPayouts() {
       ? reward.window_start
       : `${reward.window_start}-${reward.window_end}`;
 
+    // Build ignore filter for this query (params start at $10)
+    const ignoreFilter = buildIgnoreFilter(ignoredWallets, 10);
+
     const payouts = await pool.query<{
       payout_amount: string;
     }>(`
-      -- Aggregate weights across window range
+      -- Aggregate weights across window range (excluding ignored wallets)
       WITH wallet_weights AS (
         SELECT
           w.wallet,
@@ -96,6 +123,7 @@ async function computeRewardPayouts() {
         WHERE wl.is_system_owned = true
           AND w.window_id >= $3  -- window_start
           AND w.window_id <= $4  -- window_end
+          ${ignoreFilter.clause}
         GROUP BY w.wallet
       ),
       -- Apply eligibility filter based on snapshots in the window range
@@ -164,6 +192,7 @@ async function computeRewardPayouts() {
       reward.eligibility_mode,    // $7
       windowDisplay,              // $8
       reward.mint,                // $9
+      ...ignoreFilter.params,     // $10+ ignored wallets
     ]);
 
     // -----------------------------
