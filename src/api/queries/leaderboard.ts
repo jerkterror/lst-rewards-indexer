@@ -85,7 +85,7 @@ export async function getLeaderboard(
     )
     SELECT wallet, weight::text, rank::text
     FROM ranked
-    ORDER BY weight DESC
+    ORDER BY rank ASC
     LIMIT $2 OFFSET $3`,
     [currentWindow, limit, offset]
   );
