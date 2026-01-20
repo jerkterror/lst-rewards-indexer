@@ -1,9 +1,12 @@
 import { pool } from '../../db';
+import { isWalletIgnored, getIgnoredWalletsArray } from './ignored-wallets';
 
 export interface WalletData {
   wallet: string;
   currentWindow: string;
   isEligible: boolean;
+  isIgnored: boolean;
+  ignoreMessage?: string;
   weight: string;
   weightPercentage: string;
   rank: number;
@@ -53,39 +56,92 @@ async function getMostRecentWindowWithWeights(): Promise<string | null> {
 }
 
 /**
+ * Build SQL clause and params for excluding ignored wallets
+ */
+function buildIgnoreFilter(ignoredWallets: string[], startParam: number): {
+  clause: string;
+  params: string[];
+} {
+  if (ignoredWallets.length === 0) {
+    return { clause: '', params: [] };
+  }
+  const placeholders = ignoredWallets.map((_, i) => `$${startParam + i}`).join(', ');
+  return {
+    clause: `AND wallet NOT IN (${placeholders})`,
+    params: ignoredWallets,
+  };
+}
+
+/**
  * Get data for a specific wallet
+ * Returns isIgnored: true with a message if wallet is in the ignore list
  */
 export async function getWalletData(walletAddress: string): Promise<WalletData | null> {
   const currentWindow = await getMostRecentWindowWithWeights() || 'N/A';
+
+  // Check if wallet is ignored/blacklisted
+  if (isWalletIgnored(walletAddress)) {
+    return {
+      wallet: walletAddress,
+      currentWindow,
+      isEligible: false,
+      isIgnored: true,
+      ignoreMessage: 'Your wallet is flagged as ineligible. If you think this is a mistake, contact the Layer 33 team.',
+      weight: '0',
+      weightPercentage: '0',
+      rank: 0,
+      totalHolders: 0,
+      projectedReward: {
+        amount: '0',
+        symbol: process.env.WEEKLY_REWARD_SYMBOL || 'ORE',
+        decimals: 9,
+        displayAmount: '0.000000000',
+      },
+      latestSnapshot: null,
+    };
+  }
+
+  // Get ignored wallets for exclusion from rank calculations
+  const ignoredWallets = getIgnoredWalletsArray();
 
   // Get reward pool config
   const weeklyAmount = process.env.WEEKLY_REWARD_AMOUNT || '3750000000';
   const weeklySymbol = process.env.WEEKLY_REWARD_SYMBOL || 'ORE';
   const weeklyDecimals = 9;
 
+  // Build ignore filter for ranking query (starts at param $2)
+  const rankIgnore = buildIgnoreFilter(ignoredWallets, 2);
+
+  // Build ignore filter for total weight query (starts at param $2)
+  const totalIgnore = buildIgnoreFilter(ignoredWallets, 2);
+
   // Run queries in parallel
   const [walletWeightResult, totalWeightResult, snapshotResult] = await Promise.all([
-    // Get wallet's weight and rank
+    // Get wallet's weight and rank (calculated among non-ignored wallets only)
     pool.query<{ wallet: string; weight: string; rank: string; total_count: string }>(
-      `WITH ranked AS (
+      `WITH filtered AS (
+        SELECT wallet, weight
+        FROM weights
+        WHERE window_id = $1 ${rankIgnore.clause}
+      ),
+      ranked AS (
         SELECT wallet, weight,
                RANK() OVER (ORDER BY weight DESC) as rank,
                COUNT(*) OVER () as total_count
-        FROM weights
-        WHERE window_id = $1
+        FROM filtered
       )
       SELECT wallet, weight::text, rank::text, total_count::text
       FROM ranked
-      WHERE wallet = $2`,
-      [currentWindow, walletAddress]
+      WHERE wallet = $${2 + rankIgnore.params.length}`,
+      [currentWindow, ...rankIgnore.params, walletAddress]
     ),
 
-    // Get total weight for percentage calculation
+    // Get total weight for percentage calculation (excluding ignored wallets)
     pool.query<{ total_weight: string | null }>(
-      `SELECT SUM(weight) as total_weight
+      `SELECT COALESCE(SUM(weight), 0) as total_weight
        FROM weights
-       WHERE window_id = $1`,
-      [currentWindow]
+       WHERE window_id = $1 ${totalIgnore.clause}`,
+      [currentWindow, ...totalIgnore.params]
     ),
 
     // Get latest snapshot for wallet
@@ -139,6 +195,7 @@ export async function getWalletData(walletAddress: string): Promise<WalletData |
     wallet: walletAddress,
     currentWindow,
     isEligible: latestSnapshot?.eligible ?? false,
+    isIgnored: false,
     weight,
     weightPercentage,
     rank,
