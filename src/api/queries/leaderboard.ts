@@ -71,6 +71,7 @@ export async function getLeaderboard(
   const totalPages = Math.ceil(totalCount / limit);
 
   // Get paginated leaderboard entries
+  // Order by weight DESC to ensure numeric ordering (not string ordering of rank)
   const entriesResult = await pool.query<{
     wallet: string;
     weight: string;
@@ -84,7 +85,7 @@ export async function getLeaderboard(
     )
     SELECT wallet, weight::text, rank::text
     FROM ranked
-    ORDER BY rank
+    ORDER BY weight DESC
     LIMIT $2 OFFSET $3`,
     [currentWindow, limit, offset]
   );
