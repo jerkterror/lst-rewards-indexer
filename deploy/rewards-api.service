@@ -1,0 +1,48 @@
+# LST Rewards API - systemd service
+# Location: /etc/systemd/system/rewards-api.service
+#
+# Commands:
+#   sudo systemctl start rewards-api     # Start the service
+#   sudo systemctl stop rewards-api      # Stop the service
+#   sudo systemctl restart rewards-api   # Restart the service
+#   sudo systemctl status rewards-api    # Check status
+#   sudo journalctl -u rewards-api -f    # View logs (live)
+
+[Unit]
+Description=LST Rewards Read-Only API
+Documentation=https://github.com/layer33/lst-rewards-indexer
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=indexer
+Group=indexer
+WorkingDirectory=/home/indexer/lst-rewards-indexer
+
+# Start command
+ExecStart=/usr/bin/npx ts-node src/runners/api-server.ts
+
+# Restart on failure
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Environment
+Environment=NODE_ENV=production
+
+# Logging - use journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rewards-api
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/indexer/lst-rewards-indexer/exports
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
