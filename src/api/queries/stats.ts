@@ -15,28 +15,22 @@ export interface GlobalStats {
 }
 
 /**
- * Get the current ISO week ID (format: YYYY-WNN)
- * Weeks start on Wednesday at 00:00 UTC (shifted by 2 days from ISO standard)
+ * Get the most recent window that has weight data
+ * This ensures we always show data that exists, regardless of window calculation timing
  */
-function getCurrentWindowId(): string {
-  const now = new Date();
-  // Shift by 2 days so week starts Wednesday
-  const shifted = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
-  const year = shifted.getUTCFullYear();
-
-  // Calculate ISO week number
-  const jan1 = new Date(Date.UTC(year, 0, 1));
-  const days = Math.floor((shifted.getTime() - jan1.getTime()) / (24 * 60 * 60 * 1000));
-  const weekNum = Math.ceil((days + jan1.getUTCDay() + 1) / 7);
-
-  return `${year}-W${String(weekNum).padStart(2, '0')}`;
+async function getMostRecentWindowWithWeights(): Promise<string | null> {
+  const result = await pool.query<{ window_id: string }>(
+    `SELECT window_id FROM weights ORDER BY window_id DESC LIMIT 1`
+  );
+  return result.rows[0]?.window_id || null;
 }
 
 /**
  * Get global statistics for the rewards program
  */
 export async function getGlobalStats(): Promise<GlobalStats> {
-  const currentWindow = getCurrentWindowId();
+  // Get the most recent window with weight data
+  const currentWindow = await getMostRecentWindowWithWeights() || 'N/A';
 
   // Get reward pool config from environment
   const weeklyAmount = process.env.WEEKLY_REWARD_AMOUNT || '3750000000';

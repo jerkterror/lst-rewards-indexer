@@ -43,23 +43,20 @@ export interface WalletHistory {
 }
 
 /**
- * Get the current ISO week ID (format: YYYY-WNN)
+ * Get the most recent window that has weight data
  */
-function getCurrentWindowId(): string {
-  const now = new Date();
-  const shifted = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
-  const year = shifted.getUTCFullYear();
-  const jan1 = new Date(Date.UTC(year, 0, 1));
-  const days = Math.floor((shifted.getTime() - jan1.getTime()) / (24 * 60 * 60 * 1000));
-  const weekNum = Math.ceil((days + jan1.getUTCDay() + 1) / 7);
-  return `${year}-W${String(weekNum).padStart(2, '0')}`;
+async function getMostRecentWindowWithWeights(): Promise<string | null> {
+  const result = await pool.query<{ window_id: string }>(
+    `SELECT window_id FROM weights ORDER BY window_id DESC LIMIT 1`
+  );
+  return result.rows[0]?.window_id || null;
 }
 
 /**
  * Get data for a specific wallet
  */
 export async function getWalletData(walletAddress: string): Promise<WalletData | null> {
-  const currentWindow = getCurrentWindowId();
+  const currentWindow = await getMostRecentWindowWithWeights() || 'N/A';
 
   // Get reward pool config
   const weeklyAmount = process.env.WEEKLY_REWARD_AMOUNT || '3750000000';
