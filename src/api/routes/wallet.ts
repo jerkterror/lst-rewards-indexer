@@ -22,7 +22,7 @@ function isValidWalletAddress(address: string): boolean {
 walletRouter.get(
   '/:address',
   asyncHandler(async (req: Request, res: Response) => {
-    const { address } = req.params;
+    const address = req.params.address as string;
 
     if (!isValidWalletAddress(address)) {
       throw createError('Invalid wallet address', 400, 'INVALID_ADDRESS');
@@ -47,7 +47,7 @@ walletRouter.get(
 walletRouter.get(
   '/:address/history',
   asyncHandler(async (req: Request, res: Response) => {
-    const { address } = req.params;
+    const address = req.params.address as string;
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
 
