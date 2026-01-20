@@ -1,4 +1,7 @@
 // src/jobs/classify-wallets.ts
+// Classifies wallets as system-owned (eligible for rewards) or program-owned
+// Can be run standalone or imported as a module
+
 import 'dotenv/config';
 import { Connection, PublicKey, SystemProgram } from '@solana/web3.js';
 import { pool } from '../db';
@@ -8,7 +11,7 @@ if (!RPC_URL) throw new Error('Missing SOLANA_RPC_URL');
 
 const connection = new Connection(RPC_URL, 'confirmed');
 
-async function classifyWallets() {
+export async function classifyWallets(): Promise<{ classified: number; systemOwned: number }> {
   const { rows } = await pool.query<{
     wallet: string;
   }>(`
@@ -21,7 +24,7 @@ async function classifyWallets() {
 
   if (rows.length === 0) {
     console.log('No wallets to classify');
-    return;
+    return { classified: 0, systemOwned: 0 };
   }
 
   // OPTIMIZED: Batch RPC calls (100 wallets per call)
@@ -78,9 +81,20 @@ async function classifyWallets() {
   }
 
   console.log('Wallet classification complete');
+
+  const systemOwned = classifications.filter(c => c.isSystemOwned).length;
+  return { classified: rows.length, systemOwned };
 }
 
-classifyWallets().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Run directly if this is the main module
+if (require.main === module) {
+  classifyWallets()
+    .then((result) => {
+      console.log(`Result: ${result.classified} classified, ${result.systemOwned} system-owned`);
+      process.exit(0);
+    })
+    .catch((e) => {
+      console.error(e);
+      process.exit(1);
+    });
+}

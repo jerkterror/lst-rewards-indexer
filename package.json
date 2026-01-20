@@ -7,7 +7,9 @@
     "dev": "ts-node src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "api": "ts-node src/runners/api-server.ts"
+    "api": "ts-node src/runners/api-server.ts",
+    "test-flow": "ts-node src/runners/test-snapshot-flow.ts",
+    "scheduler": "ts-node src/runners/scheduler.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.0.1",

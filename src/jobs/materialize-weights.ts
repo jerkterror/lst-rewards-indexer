@@ -1,8 +1,16 @@
 // src/jobs/materialize-weights.ts
+// Computes time-weighted stake for each wallet per window
+// Can be run standalone or imported as a module
+
 import 'dotenv/config';
 import { pool } from '../db';
 
-async function materializeWeights() {
+export interface WeightResult {
+  inserted: number;
+  windows: string[];
+}
+
+export async function materializeWeights(): Promise<WeightResult> {
   console.log('Materializing eligible weights...');
 
   const result = await pool.query(`
@@ -53,18 +61,27 @@ async function materializeWeights() {
     RETURNING window_id, wallet, weight;
   `);
 
-  console.log(`Inserted ${result.rowCount ?? 0} weight rows`);
+  const inserted = result.rowCount ?? 0;
+  const windows = [...new Set(result.rows.map(r => r.window_id))];
 
-  if ((result.rowCount ?? 0) > 0) {
-    console.table(result.rows.map(r => ({
-      window: r.window_id,
-      wallet: r.wallet,
-      weight: r.weight.toString(),
-    })));
+  console.log(`Inserted ${inserted} weight rows`);
+
+  if (inserted > 0) {
+    console.log(`Windows updated: ${windows.join(', ')}`);
   }
+
+  return { inserted, windows };
 }
 
-materializeWeights().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Run directly if this is the main module
+if (require.main === module) {
+  materializeWeights()
+    .then((result) => {
+      console.log(`Result: ${result.inserted} rows inserted for windows: ${result.windows.join(', ') || 'none'}`);
+      process.exit(0);
+    })
+    .catch((e) => {
+      console.error(e);
+      process.exit(1);
+    });
+}
