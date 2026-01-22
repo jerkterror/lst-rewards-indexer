@@ -23,10 +23,10 @@ The pipeline is fully auditable, completely token-agnostic, and designed for hum
 
 | Method | Best For | Multisig Overhead |
 |--------|----------|-------------------|
-| Direct Squads Transfers | <100 recipients | N proposals (batches of 6) |
-| **Merkle Distribution** | 100+ recipients | 2 proposals total |
+| Direct Squads Transfers | ≤12 recipients (2 batches) | N proposals (batches of 6) |
+| **Merkle Distribution** | 12+ recipients | 1 proposal total |
 
-The Merkle distribution system uses an on-chain Anchor program to verify cryptographic proofs, enabling efficient distribution to thousands of recipients with minimal multisig signing overhead.
+The Merkle distribution system uses an on-chain Anchor program to verify cryptographic proofs, enabling efficient distribution to thousands of recipients with minimal multisig signing overhead. For anything beyond 2 batches of direct transfers, Merkle is the recommended approach.
 
 ---
 
@@ -118,23 +118,31 @@ ELIGIBILITY_TOKEN_MINT=oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp
 ELIGIBILITY_TOKEN_SYMBOL=ORE
 ELIGIBILITY_TOKEN_MIN_AMOUNT=1000000000  # 1 ORE (9 decimals)
 
-# Squads Multisig (optional - only for payout proposals)
-SQUADS_MULTISIG=
-SQUAD_VAULT_ADDRESS=
-SQUADS_MEMBER_KEYPAIR=
+# Squads Multisig (required for payout proposals)
+SQUADS_MULTISIG=YourMultisigPDA
+SQUAD_VAULT_ADDRESS=YourVaultPDA
+SQUADS_MEMBER_KEYPAIR=./keys/id.json
 
-# Optional
+# Direct Squads Transfers (optional - for small distributions)
 MAX_TRANSFERS_PER_TX=6
 
-# Merkle Distribution (optional - for scalable payouts)
+# Merkle Distribution (recommended for 12+ recipients)
 MERKLE_PROGRAM_ID=8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4
-RELAYER_KEYPAIR=./keys/relayer.json
+RELAYER_KEYPAIR=./keys/id.json
+
+# Relayer Configuration (optional)
+RELAYER_BATCH_SIZE=2          # Claims per transaction (2 recommended)
+RELAYER_MAX_RETRIES=3         # Retry attempts for failed claims
+RELAYER_RETRY_DELAY=2000      # Delay between retries (ms)
+RELAYER_COMPUTE_UNITS=400000  # Compute units per transaction
+RELAYER_COMPUTE_PRICE=1000    # Priority fee (micro-lamports)
 ```
 
 **Configuration Notes:**
 - `PRIMARY_TOKEN_MINT`: The token you're tracking (e.g., your LST)
 - `ELIGIBILITY_TOKEN_MINT`: Optional requirement (leave empty/commented for no requirement)
 - If no eligibility token is set, all primary token holders are eligible
+- `RELAYER_BATCH_SIZE`: Set to 2 for optimal throughput; use 1 if transactions are failing due to size limits
 
 Secrets and keypairs must **never** be committed.
 
@@ -373,11 +381,11 @@ This system **does not**:
 
 ### Two Execution Paths
 
-**Option A: Direct Squads Transfers** (small distributions)
+**Option A: Direct Squads Transfers** (≤12 recipients)
 - Export CSV → Create batched transfer proposals → Multisig approves → Funds sent
 
-**Option B: Merkle Distribution** (large distributions, 100+ recipients)
-- Export CSV → Build Merkle tree → Multisig approves root + funds vault → Relayer processes claims
+**Option B: Merkle Distribution** (12+ recipients, recommended)
+- Export CSV → Build Merkle tree → Multisig approves single proposal → Relayer processes claims
 
 See `OPERATOR_PLAYBOOK.md` for detailed instructions on both methods.
 
@@ -385,16 +393,16 @@ See `OPERATOR_PLAYBOOK.md` for detailed instructions on both methods.
 
 ## Merkle Distribution Quick Start
 
-For distributions with many recipients, the Merkle system is more efficient:
+For distributions with more than ~12 recipients, the Merkle system is more efficient:
 
 ```bash
 # 1. Build Merkle distribution from CSV
 npx ts-node src/jobs/build-merkle-distribution.ts exports/ORE_2025_W52.csv
 
-# 2. Create multisig proposals (init + fund)
+# 2. Create multisig proposal (init + fund in single tx)
 npx ts-node src/jobs/init-merkle-distribution.ts distributions/ORE_2025_W52_merkle.json
 
-# 3. Approve proposals in Squads UI
+# 3. Approve and execute proposal in Squads UI
 
 # 4. Run relayer to process claims
 npx ts-node src/jobs/run-merkle-relayer.ts distributions/ORE_2025_W52_merkle.json

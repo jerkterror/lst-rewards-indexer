@@ -703,9 +703,9 @@ The Merkle distribution system provides a more scalable alternative to the direc
 
 | Traditional Multisig | Merkle Distribution |
 |---------------------|---------------------|
-| N proposals for N/6 batches | 2 proposals total |
+| N proposals for N/6 batches | 1 proposal total |
 | O(N) signing overhead | O(1) signing overhead |
-| Limited to ~100 recipients | Scales to 1000+ recipients |
+| Best for ≤12 recipients | Scales to 1000+ recipients |
 | Each signer reviews many txs | Signers review summary + root |
 
 ### Architecture
@@ -717,9 +717,8 @@ Existing Pipeline (unchanged)
 New Execution Layer
 ├── CSV Export
 ├── Merkle Builder (generates root + proofs)
-├── Multisig approves:
-│   ├── Initialize distribution (root commitment)
-│   └── Fund vault (transfer tokens)
+├── Multisig approves single proposal:
+│   └── Initialize distribution + Fund vault (one tx)
 ├── Relayer executes claims (untrusted, batched)
 └── Optional clawback of remaining funds
 ```
@@ -740,22 +739,22 @@ This creates:
 
 #### Step 2: Initialize via Multisig
 
-Create multisig proposals to fund and initialize the distribution:
+Create a multisig proposal to initialize and fund the distribution:
 
 ```bash
 npx ts-node src/jobs/init-merkle-distribution.ts distributions/ORE_W52_merkle.json
 ```
 
-This creates two Squads proposals:
-1. **Initialize Distribution** — Sets the Merkle root on-chain
-2. **Fund Vault** — Transfers tokens to the distribution vault
+This creates a single Squads proposal that:
+1. **Initializes Distribution** — Sets the Merkle root on-chain
+2. **Funds Vault** — Transfers tokens to the distribution vault
 
-#### Step 3: Approve and Execute Proposals
+#### Step 3: Approve and Execute Proposal
 
 In the Squads UI:
 1. Review the distribution summary (reward ID, amount, recipient count)
 2. Verify the Merkle root matches the artifact
-3. Approve and execute both proposals
+3. Approve and execute the proposal
 
 #### Step 4: Run Relayer
 
@@ -779,14 +778,14 @@ MERKLE_PROGRAM_ID=8LMVzwtrcVCLJPFfUFviqWv49WoyN1PKNLd9EDj4X4H4
 RELAYER_KEYPAIR=./keys/relayer.json
 
 # Optional relayer tuning
-RELAYER_BATCH_SIZE=1        # Use 1 for large proofs (tx size limit)
+RELAYER_BATCH_SIZE=2        # 2 recommended; use 1 if transactions fail due to size
 RELAYER_MAX_RETRIES=3
 RELAYER_RETRY_DELAY=2000
 RELAYER_COMPUTE_UNITS=400000
 RELAYER_COMPUTE_PRICE=1000
 ```
 
-**Note:** `RELAYER_BATCH_SIZE` should be set to `1` for distributions with many recipients, as Merkle proofs are large and can exceed Solana's 1232-byte transaction size limit.
+**Note:** `RELAYER_BATCH_SIZE=2` works well for most distributions. If you encounter transaction size errors with very large recipient counts (1000+), reduce to 1.
 
 ### Deployed Program
 
@@ -884,7 +883,7 @@ The test script performs:
 - Check vault has sufficient token balance
 
 **Slow processing:**
-- Increase `RELAYER_BATCH_SIZE` (max ~8 due to tx size)
+- Increase `RELAYER_BATCH_SIZE` to 2 (higher values may hit tx size limits)
 - Reduce `RELAYER_RETRY_DELAY` for faster retries
 - Use dedicated RPC for better throughput
 
@@ -892,7 +891,7 @@ The test script performs:
 
 ## Quick Reference: Full Reward Distribution Workflow
 
-### Option A: Traditional Squads Multisig (Small Distributions)
+### Option A: Traditional Squads Multisig (≤12 recipients)
 
 ```bash
 # 1. Run pipeline to collect and process data
@@ -911,7 +910,7 @@ npx ts-node src/jobs/export-reward-csv.ts ORE_2025_W52
 npx ts-node src/jobs/squads-create-payout-proposals.ts exports/ORE_2025_W52.csv
 ```
 
-### Option B: Merkle Distribution (Large Distributions, 100+ recipients)
+### Option B: Merkle Distribution (12+ recipients, recommended)
 
 ```bash
 # 1. Run pipeline to collect and process data
@@ -929,10 +928,10 @@ npx ts-node src/jobs/export-reward-csv.ts ORE_2025_W52
 # 5. Build Merkle distribution
 npx ts-node src/jobs/build-merkle-distribution.ts exports/ORE_2025_W52.csv
 
-# 6. Create multisig proposals (init + fund)
+# 6. Create multisig proposal (init + fund in single tx)
 npx ts-node src/jobs/init-merkle-distribution.ts distributions/ORE_2025_W52_merkle.json
 
-# 7. Approve proposals in Squads UI
+# 7. Approve proposal in Squads UI
 
 # 8. Run relayer to process claims
 npx ts-node src/jobs/run-merkle-relayer.ts distributions/ORE_2025_W52_merkle.json

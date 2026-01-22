@@ -89,9 +89,9 @@ async function main() {
   if (!artifactPath) {
     console.log('Usage: npx ts-node src/jobs/init-merkle-distribution.ts <artifact-path>');
     console.log('');
-    console.log('Creates Squads multisig proposals to:');
-    console.log('  1. Fund the distribution vault');
-    console.log('  2. Initialize the on-chain distribution with Merkle root');
+    console.log('Creates a single Squads multisig proposal that:');
+    console.log('  1. Initializes the on-chain distribution with Merkle root');
+    console.log('  2. Funds the distribution vault');
     console.log('');
     console.log('Example:');
     console.log('  npx ts-node src/jobs/init-merkle-distribution.ts distributions/ORE_W51_TEST_merkle.json');
@@ -197,11 +197,9 @@ async function main() {
     multisigPda
   );
 
-  let nextTransactionIndex = BigInt(Number(multisigInfo.transactionIndex)) + 1n;
+  const nextTransactionIndex = BigInt(Number(multisigInfo.transactionIndex)) + 1n;
 
-  // === PROPOSAL 1: Initialize Distribution ===
-  console.log('\n📝 Creating Proposal 1: Initialize Distribution');
-
+  // Build both instructions
   const initIx = buildInitializeInstruction(
     programId,
     vaultAuthority,
@@ -214,45 +212,6 @@ async function main() {
     artifact.numRecipients
   );
 
-  const { blockhash: blockhash1 } = await connection.getLatestBlockhash();
-
-  const initMessage = new TransactionMessage({
-    payerKey: vaultAuthority,
-    recentBlockhash: blockhash1,
-    instructions: [initIx],
-  });
-
-  const initTxSig = await multisig.rpc.vaultTransactionCreate({
-    connection,
-    feePayer: member,
-    multisigPda,
-    transactionIndex: nextTransactionIndex,
-    creator: member.publicKey,
-    vaultIndex: 0,
-    ephemeralSigners: 0,
-    transactionMessage: initMessage,
-    memo: `Initialize Merkle distribution: ${artifact.rewardId}`,
-  });
-
-  await connection.confirmTransaction(initTxSig, 'confirmed');
-
-  const initProposalSig = await multisig.rpc.proposalCreate({
-    connection,
-    feePayer: member,
-    multisigPda,
-    transactionIndex: nextTransactionIndex,
-    creator: member,
-  });
-
-  await connection.confirmTransaction(initProposalSig, 'confirmed');
-
-  console.log(`  ✓ Created (txIndex=${nextTransactionIndex})`);
-
-  nextTransactionIndex += 1n;
-
-  // === PROPOSAL 2: Fund Vault ===
-  console.log('\n📝 Creating Proposal 2: Fund Distribution Vault');
-
   const fundIx = createTransferCheckedInstruction(
     sourceAta,
     mint,
@@ -262,15 +221,21 @@ async function main() {
     decimals
   );
 
-  const { blockhash: blockhash2 } = await connection.getLatestBlockhash();
+  // === SINGLE PROPOSAL: Initialize + Fund Distribution ===
+  console.log('\n📝 Creating Proposal: Initialize + Fund Distribution');
+  console.log('   Instructions:');
+  console.log('     1. Initialize Merkle distribution (set Merkle root on-chain)');
+  console.log(`     2. Fund vault with ${fromRawAmount(totalAmount, decimals)} ${symbol}`);
 
-  const fundMessage = new TransactionMessage({
+  const { blockhash } = await connection.getLatestBlockhash();
+
+  const combinedMessage = new TransactionMessage({
     payerKey: vaultAuthority,
-    recentBlockhash: blockhash2,
-    instructions: [fundIx],
+    recentBlockhash: blockhash,
+    instructions: [initIx, fundIx],  // Initialize first, then fund
   });
 
-  const fundTxSig = await multisig.rpc.vaultTransactionCreate({
+  const vaultTxSig = await multisig.rpc.vaultTransactionCreate({
     connection,
     feePayer: member,
     multisigPda,
@@ -278,13 +243,13 @@ async function main() {
     creator: member.publicKey,
     vaultIndex: 0,
     ephemeralSigners: 0,
-    transactionMessage: fundMessage,
-    memo: `Fund Merkle distribution: ${artifact.rewardId} (${fromRawAmount(totalAmount, decimals)} ${symbol})`,
+    transactionMessage: combinedMessage,
+    memo: `Merkle distribution: ${artifact.rewardId} (${fromRawAmount(totalAmount, decimals)} ${symbol} to ${artifact.numRecipients} recipients)`,
   });
 
-  await connection.confirmTransaction(fundTxSig, 'confirmed');
+  await connection.confirmTransaction(vaultTxSig, 'confirmed');
 
-  const fundProposalSig = await multisig.rpc.proposalCreate({
+  const proposalSig = await multisig.rpc.proposalCreate({
     connection,
     feePayer: member,
     multisigPda,
@@ -292,7 +257,7 @@ async function main() {
     creator: member,
   });
 
-  await connection.confirmTransaction(fundProposalSig, 'confirmed');
+  await connection.confirmTransaction(proposalSig, 'confirmed');
 
   console.log(`  ✓ Created (txIndex=${nextTransactionIndex})`);
 
@@ -317,11 +282,11 @@ async function main() {
 
   console.log('');
   console.log('-'.repeat(60));
-  console.log('\n✅ Proposals created successfully!');
+  console.log('\n✅ Proposal created successfully!');
   console.log('');
   console.log('Next Steps:');
-  console.log('  1. Review and approve proposals in Squads UI');
-  console.log('  2. Execute both proposals (order: initialize, then fund)');
+  console.log('  1. Review and approve the proposal in Squads UI');
+  console.log('  2. Execute the proposal (initializes distribution + funds vault)');
   console.log('  3. Run relayer to process claims:');
   console.log(`     npx ts-node src/jobs/run-merkle-relayer.ts ${artifactPath}`);
 }
