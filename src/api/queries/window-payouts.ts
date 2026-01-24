@@ -1,4 +1,5 @@
 import { pool } from '../../db';
+import { getTokenBySymbol } from '../../config/tokens';
 
 export interface WindowPayoutEntry {
   rank: number;
@@ -77,8 +78,9 @@ export async function getAvailableWindows(limit: number = 5): Promise<AvailableW
     [limit]
   );
 
-  const decimals = 9;
   const symbol = process.env.WEEKLY_REWARD_SYMBOL || 'ORE';
+  const tokenInfo = getTokenBySymbol(symbol);
+  const decimals = tokenInfo?.decimals || 11; // Default to 11 for ORE
 
   const windows: AvailableWindow[] = result.rows.map((row) => ({
     windowId: row.window_id,
@@ -105,8 +107,9 @@ export async function getWindowPayouts(
   limit: number = 25
 ): Promise<WindowPayoutsData | null> {
   const offset = (page - 1) * limit;
-  const decimals = 9;
   const symbol = process.env.WEEKLY_REWARD_SYMBOL || 'ORE';
+  const tokenInfo = getTokenBySymbol(symbol);
+  const decimals = tokenInfo?.decimals || 11; // Default to 11 for ORE
 
   // First check if window exists and get metadata
   const metaResult = await pool.query<{
@@ -199,8 +202,9 @@ export async function getWalletTotalRewards(walletAddress: string): Promise<{
   symbol: string;
   windowCount: number;
 }> {
-  const decimals = 9;
   const symbol = process.env.WEEKLY_REWARD_SYMBOL || 'ORE';
+  const tokenInfo = getTokenBySymbol(symbol);
+  const decimals = tokenInfo?.decimals || 11; // Default to 11 for ORE
 
   const result = await pool.query<{
     total_amount: string;

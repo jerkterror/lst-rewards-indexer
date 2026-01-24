@@ -17,7 +17,7 @@ export const KNOWN_TOKENS: Record<string, TokenInfo> = {
   },
   ORE: {
     mint: 'oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp',
-    decimals: 9,
+    decimals: 11,
     symbol: 'ORE',
     name: 'ORE',
   },

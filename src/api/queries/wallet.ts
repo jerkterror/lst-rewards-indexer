@@ -1,5 +1,6 @@
 import { pool } from '../../db';
 import { isWalletIgnored, getIgnoredWalletsArray } from './ignored-wallets';
+import { getTokenBySymbol } from '../../config/tokens';
 
 export interface WalletData {
   wallet: string;
@@ -256,16 +257,18 @@ export async function getWalletHistory(
     [walletAddress, limit, offset]
   );
 
+  const symbol = process.env.WEEKLY_REWARD_SYMBOL || 'ORE';
+  const tokenInfo = getTokenBySymbol(symbol);
+  const decimals = tokenInfo?.decimals || 11; // Default to 11 for ORE
+
   const history: WalletHistoryEntry[] = historyResult.rows.map((row) => {
-    // Determine decimals based on mint (default to 9 for ORE)
-    const decimals = 9;
     const displayAmount = (Number(row.payout_amount) / 10 ** decimals).toFixed(decimals);
 
     return {
       rewardId: row.reward_id,
       windowId: row.window_id,
       amount: row.payout_amount,
-      symbol: process.env.WEEKLY_REWARD_SYMBOL || 'ORE',
+      symbol,
       displayAmount,
       distributedAt: row.created_at.toISOString(),
     };
