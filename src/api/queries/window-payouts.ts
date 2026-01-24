@@ -122,7 +122,7 @@ export async function getWindowPayouts(
   const tokenInfo = getTokenBySymbol(symbol);
   const decimals = tokenInfo?.decimals || 11; // Default to 11 for ORE
 
-  // First check if window exists and get metadata
+  // First check if window exists and get metadata (only production rewards)
   const metaResult = await pool.query<{
     reward_id: string;
     created_at: Date;
@@ -137,6 +137,7 @@ export async function getWindowPayouts(
      FROM reward_payouts_preview rpp
      JOIN reward_configs rc ON rpp.reward_id = rc.reward_id
      WHERE rpp.window_id = $1 AND rpp.payout_amount > 0
+       AND rpp.reward_id ~ '^[A-Z]+_[0-9]{4}_W[0-9]{2}$'
      GROUP BY rpp.reward_id, rc.created_at`,
     [windowId]
   );
@@ -149,30 +150,37 @@ export async function getWindowPayouts(
   const totalItems = parseInt(meta.recipient_count, 10);
   const totalPages = Math.ceil(totalItems / limit);
 
-  // Get paginated recipients
+  // Get paginated recipients using CTE with RANK() for proper ordering
   const recipientsResult = await pool.query<{
     wallet: string;
     payout_amount: string;
     share: string;
+    rank: string;
   }>(
-    `SELECT
-       wallet,
-       payout_amount::text,
-       share::text
-     FROM reward_payouts_preview
-     WHERE window_id = $1 AND payout_amount > 0
-     ORDER BY payout_amount DESC
-     LIMIT $2 OFFSET $3`,
+    `WITH filtered AS (
+      SELECT wallet, payout_amount, share
+      FROM reward_payouts_preview
+      WHERE window_id = $1 AND payout_amount > 0
+        AND reward_id ~ '^[A-Z]+_[0-9]{4}_W[0-9]{2}$'
+    ),
+    ranked AS (
+      SELECT wallet, payout_amount, share,
+             RANK() OVER (ORDER BY payout_amount DESC) as rank
+      FROM filtered
+    )
+    SELECT wallet, payout_amount::text, share::text, rank::text
+    FROM ranked
+    ORDER BY rank::integer ASC
+    LIMIT $2 OFFSET $3`,
     [windowId, limit, offset]
   );
 
-  const recipients: WindowPayoutEntry[] = recipientsResult.rows.map((row, index) => {
+  const recipients: WindowPayoutEntry[] = recipientsResult.rows.map((row) => {
     const displayAmount = (Number(row.payout_amount) / 10 ** decimals).toFixed(decimals);
     const sharePercentage = (Number(row.share) * 100).toFixed(4);
-    const rank = offset + index + 1;
 
     return {
-      rank,
+      rank: parseInt(row.rank, 10),
       wallet: shortenWallet(row.wallet),
       walletFull: row.wallet,
       payoutAmount: row.payout_amount,
