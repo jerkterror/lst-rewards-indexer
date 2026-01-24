@@ -228,18 +228,19 @@ export async function getWalletHistory(
 ): Promise<WalletHistory> {
   const offset = (page - 1) * limit;
 
-  // Get total count first
+  // Get total count first (only production rewards)
   const countResult = await pool.query<{ count: string }>(
     `SELECT COUNT(*) as count
      FROM reward_payouts_preview
-     WHERE wallet = $1 AND payout_amount > 0`,
+     WHERE wallet = $1 AND payout_amount > 0
+       AND reward_id ~ '^[A-Z]+_[0-9]{4}_W[0-9]{2}$'`,
     [walletAddress]
   );
 
   const totalItems = parseInt(countResult.rows[0]?.count || '0', 10);
   const totalPages = Math.ceil(totalItems / limit);
 
-  // Get paginated history
+  // Get paginated history (only production rewards)
   const historyResult = await pool.query<{
     reward_id: string;
     window_id: string;
@@ -252,6 +253,7 @@ export async function getWalletHistory(
      FROM reward_payouts_preview rpp
      JOIN reward_configs rc ON rpp.reward_id = rc.reward_id
      WHERE rpp.wallet = $1 AND rpp.payout_amount > 0
+       AND rpp.reward_id ~ '^[A-Z]+_[0-9]{4}_W[0-9]{2}$'
      ORDER BY rc.created_at DESC
      LIMIT $2 OFFSET $3`,
     [walletAddress, limit, offset]

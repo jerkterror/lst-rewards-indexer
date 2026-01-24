@@ -52,6 +52,16 @@ function shortenWallet(wallet: string): string {
 }
 
 /**
+ * Check if reward_id matches production pattern (e.g., ORE_2026_W03)
+ * Excludes test rewards like FRONK_TEST_2026W01_v2
+ */
+function isProductionReward(rewardId: string): boolean {
+  // Pattern: TOKEN_YYYY_WNN (e.g., ORE_2026_W03)
+  const pattern = /^[A-Z]+_\d{4}_W\d{2}$/;
+  return pattern.test(rewardId);
+}
+
+/**
  * Get list of available windows with payout data
  * Returns most recent windows first (up to limit)
  */
@@ -72,6 +82,7 @@ export async function getAvailableWindows(limit: number = 5): Promise<AvailableW
      FROM reward_payouts_preview rpp
      JOIN reward_configs rc ON rpp.reward_id = rc.reward_id
      WHERE rpp.payout_amount > 0
+       AND rpp.reward_id ~ '^[A-Z]+_[0-9]{4}_W[0-9]{2}$'
      GROUP BY rpp.window_id, rpp.reward_id, rc.created_at
      ORDER BY rc.created_at DESC
      LIMIT $1`,
@@ -214,7 +225,8 @@ export async function getWalletTotalRewards(walletAddress: string): Promise<{
        COALESCE(SUM(payout_amount), 0)::text as total_amount,
        COUNT(DISTINCT window_id)::text as window_count
      FROM reward_payouts_preview
-     WHERE wallet = $1 AND payout_amount > 0`,
+     WHERE wallet = $1 AND payout_amount > 0
+       AND reward_id ~ '^[A-Z]+_[0-9]{4}_W[0-9]{2}$'`,
     [walletAddress]
   );
 
