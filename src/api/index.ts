@@ -6,6 +6,7 @@ import { healthRouter } from './routes/health';
 import { statsRouter } from './routes/stats';
 import { walletRouter } from './routes/wallet';
 import { leaderboardRouter } from './routes/leaderboard';
+import { windowPayoutsRouter } from './routes/window-payouts';
 import { errorHandler } from './middleware/error-handler';
 import { rateLimiter } from './middleware/rate-limit';
 
@@ -51,6 +52,7 @@ app.use('/api/health', healthRouter);
 app.use('/api/stats', statsRouter);
 app.use('/api/wallet', walletRouter);
 app.use('/api/leaderboard', leaderboardRouter);
+app.use('/api/rewards', windowPayoutsRouter);
 
 // Root endpoint
 app.get('/api', (_req, res) => {
@@ -63,6 +65,9 @@ app.get('/api', (_req, res) => {
       wallet: '/api/wallet/:address',
       walletHistory: '/api/wallet/:address/history',
       leaderboard: '/api/leaderboard',
+      rewardsWindows: '/api/rewards/windows',
+      rewardsWindow: '/api/rewards/window/:windowId',
+      rewardsTotal: '/api/rewards/total/:address',
     },
   });
 });
