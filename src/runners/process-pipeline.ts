@@ -5,12 +5,11 @@
 import 'dotenv/config';
 import { runSnapshot } from '../indexers/snapshot';
 import { pool } from '../db';
-import { Connection, PublicKey, SystemProgram } from '@solana/web3.js';
+import { PublicKey, SystemProgram } from '@solana/web3.js';
+import { FailoverConnection, getRpcConfigFromEnv } from '../utils/rpc';
 
-const RPC_URL = process.env.SOLANA_RPC_URL!;
-if (!RPC_URL) throw new Error('Missing SOLANA_RPC_URL');
-
-const connection = new Connection(RPC_URL, 'confirmed');
+const rpcConfig = getRpcConfigFromEnv();
+const rpc = new FailoverConnection(rpcConfig);
 
 // Parse command line flags
 const args = process.argv.slice(2);
@@ -52,7 +51,10 @@ async function classifyWallets() {
 
     console.log(`  Fetching batch ${Math.floor(i / BATCH_SIZE) + 1} (${batch.length} wallets)...`);
 
-    const accountInfos = await connection.getMultipleAccountsInfo(pubkeys);
+    const accountInfos = await rpc.execute(
+      (connection) => connection.getMultipleAccountsInfo(pubkeys),
+      'classifyWallets'
+    );
 
     for (let j = 0; j < batch.length; j++) {
       const info = accountInfos[j];

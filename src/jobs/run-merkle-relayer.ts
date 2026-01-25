@@ -3,11 +3,12 @@
 
 import 'dotenv/config';
 import fs from 'fs';
-import { Connection, Keypair, PublicKey } from '@solana/web3.js';
+import { Keypair, PublicKey } from '@solana/web3.js';
 import { pool } from '../db';
 import { loadArtifact, validateArtifact } from '../merkle/builder';
 import { MerkleRelayer, RelayerConfig } from '../merkle/relayer';
 import { MERKLE_DISTRIBUTOR_PROGRAM_ID } from '../merkle/types';
+import { FailoverConnection, getRpcConfigFromEnv } from '../utils/rpc';
 
 function loadKeypair(filePath: string): Keypair {
   const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -33,14 +34,17 @@ async function main() {
   }
 
   // Load configuration
-  const rpcUrl = process.env.SOLANA_RPC_URL;
-  const keypairPath = process.env.RELAYER_KEYPAIR;
-  const programIdStr = process.env.MERKLE_PROGRAM_ID;
-
-  if (!rpcUrl) {
-    console.error('❌ Missing SOLANA_RPC_URL environment variable');
+  let rpcConfig;
+  try {
+    rpcConfig = getRpcConfigFromEnv();
+  } catch (e: any) {
+    console.error(`❌ ${e.message}`);
     process.exit(1);
   }
+  const rpc = new FailoverConnection(rpcConfig);
+
+  const keypairPath = process.env.RELAYER_KEYPAIR;
+  const programIdStr = process.env.MERKLE_PROGRAM_ID;
 
   if (!keypairPath) {
     console.error('❌ Missing RELAYER_KEYPAIR environment variable');
@@ -72,19 +76,21 @@ async function main() {
   console.log('');
 
   // Initialize connection and keypair
-  const connection = new Connection(rpcUrl, 'confirmed');
   const payer = loadKeypair(keypairPath);
   const programId = programIdStr
     ? new PublicKey(programIdStr)
     : MERKLE_DISTRIBUTOR_PROGRAM_ID;
 
-  console.log(`  RPC:             ${rpcUrl}`);
+  console.log(`  RPC:             ${rpc.getCurrentUrl()}${rpc.hasBackup() ? ' (backup configured)' : ''}`);
   console.log(`  Payer:           ${payer.publicKey.toBase58()}`);
   console.log(`  Program:         ${programId.toBase58()}`);
   console.log('');
 
   // Check payer balance
-  const balance = await connection.getBalance(payer.publicKey);
+  const balance = await rpc.execute(
+    (connection) => connection.getBalance(payer.publicKey),
+    'getPayerBalance'
+  );
   console.log(`  Payer Balance:   ${(balance / 1e9).toFixed(4)} SOL`);
 
   if (balance < 0.1 * 1e9) {
@@ -95,9 +101,9 @@ async function main() {
   console.log('');
   console.log('-'.repeat(60));
 
-  // Configure relayer
+  // Configure relayer (uses current active RPC connection)
   const config: RelayerConfig = {
-    connection,
+    connection: rpc.connection,
     payer,
     programId,
     batchSize: parseInt(process.env.RELAYER_BATCH_SIZE || '5', 10),

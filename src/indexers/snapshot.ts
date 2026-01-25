@@ -1,17 +1,17 @@
 // src/indexers/snapshot.ts
 import 'dotenv/config';
 import {
-  Connection,
   PublicKey,
   ParsedAccountData,
 } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { pool } from '../db';
+import { FailoverConnection, getRpcConfigFromEnv } from '../utils/rpc';
 
 // ---------------------------
 // Config / constants
 // ---------------------------
-const RPC_URL = process.env.SOLANA_RPC_URL!;
+const rpcConfig = getRpcConfigFromEnv();
 const PRIMARY_TOKEN_MINT_STR = process.env.PRIMARY_TOKEN_MINT!;
 const PRIMARY_TOKEN_SYMBOL = process.env.PRIMARY_TOKEN_SYMBOL || 'PRIMARY';
 const ELIGIBILITY_TOKEN_MINT_STR = process.env.ELIGIBILITY_TOKEN_MINT;
@@ -19,10 +19,9 @@ const ELIGIBILITY_TOKEN_SYMBOL = process.env.ELIGIBILITY_TOKEN_SYMBOL || 'ELIGIB
 const ELIGIBILITY_TOKEN_MIN_AMOUNT_STR = process.env.ELIGIBILITY_TOKEN_MIN_AMOUNT;
 
 // Validate required config
-if (!RPC_URL) throw new Error('Missing SOLANA_RPC_URL');
 if (!PRIMARY_TOKEN_MINT_STR) throw new Error('Missing PRIMARY_TOKEN_MINT');
 
-const connection = new Connection(RPC_URL, 'confirmed');
+const rpc = new FailoverConnection(rpcConfig);
 const PRIMARY_TOKEN_MINT = new PublicKey(PRIMARY_TOKEN_MINT_STR);
 
 // Optional: Eligibility token configuration
@@ -72,19 +71,22 @@ type HolderWithEligibility = TokenHolder & {
 // Helpers
 // ---------------------------
 async function fetchTokenHolders(): Promise<TokenHolder[]> {
-  const accounts = await connection.getParsedProgramAccounts(
-    TOKEN_PROGRAM_ID,
-    {
-      filters: [
-        { dataSize: 165 },
-        {
-          memcmp: {
-            offset: 0,
-            bytes: PRIMARY_TOKEN_MINT.toBase58(),
+  const accounts = await rpc.execute(
+    (connection) => connection.getParsedProgramAccounts(
+      TOKEN_PROGRAM_ID,
+      {
+        filters: [
+          { dataSize: 165 },
+          {
+            memcmp: {
+              offset: 0,
+              bytes: PRIMARY_TOKEN_MINT.toBase58(),
+            },
           },
-        },
-      ],
-    }
+        ],
+      }
+    ),
+    'fetchTokenHolders'
   );
 
   return accounts
@@ -137,7 +139,10 @@ async function getEligibilityBalancesBatched(
     const ataAddresses = batch.map(item => item.ata);
 
     // Single batched RPC call for up to 100 accounts!
-    const accountInfos = await connection.getMultipleAccountsInfo(ataAddresses);
+    const accountInfos = await rpc.execute(
+      (connection) => connection.getMultipleAccountsInfo(ataAddresses),
+      'getEligibilityBalances'
+    );
 
     // Parse each account
     for (let j = 0; j < batch.length; j++) {
@@ -219,6 +224,7 @@ export async function runSnapshot(): Promise<void> {
 
   console.log(`Current reward window: ${windowId}`);
   console.log(`Primary token: ${PRIMARY_TOKEN_SYMBOL} (${PRIMARY_TOKEN_MINT_STR})`);
+  console.log(`RPC: ${rpc.getCurrentUrl()}${rpc.hasBackup() ? ' (backup configured)' : ''}`);
 
   if (ELIGIBILITY_TOKEN_MINT) {
     console.log(`Eligibility token: ${ELIGIBILITY_TOKEN_SYMBOL} (min: ${ELIGIBILITY_TOKEN_MIN_AMOUNT})`);

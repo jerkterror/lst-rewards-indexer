@@ -7,7 +7,6 @@ import assert from 'assert';
 
 import * as multisig from '@sqds/multisig';
 import {
-  Connection,
   PublicKey,
   Keypair,
   TransactionMessage,
@@ -26,6 +25,7 @@ import { pool } from '../db';
 import { loadArtifact, validateArtifact } from '../merkle/builder';
 import { getDistributionPda, getVaultPda } from '../merkle/relayer';
 import { getTokenByMint, fromRawAmount } from '../config/tokens';
+import { FailoverConnection, getRpcConfigFromEnv } from '../utils/rpc';
 
 function loadKeypair(filePath: string): Keypair {
   const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -99,13 +99,14 @@ async function main() {
   }
 
   // Load environment
-  const rpcUrl = process.env.SOLANA_RPC_URL!;
+  const rpcConfig = getRpcConfigFromEnv();
+  const rpc = new FailoverConnection(rpcConfig);
+
   const multisigAddr = process.env.SQUADS_MULTISIG!;
   const vaultAddr = process.env.SQUAD_VAULT_ADDRESS!;
   const keypairPath = process.env.SQUADS_MEMBER_KEYPAIR!;
   const programIdStr = process.env.MERKLE_PROGRAM_ID;
 
-  assert(rpcUrl, 'Missing SOLANA_RPC_URL');
   assert(multisigAddr, 'Missing SQUADS_MULTISIG');
   assert(vaultAddr, 'Missing SQUAD_VAULT_ADDRESS');
   assert(keypairPath, 'Missing SQUADS_MEMBER_KEYPAIR');
@@ -126,9 +127,9 @@ async function main() {
   }
 
   console.log('🔐 Merkle Distribution Initialization\n');
+  console.log(`RPC: ${rpc.getCurrentUrl()}${rpc.hasBackup() ? ' (backup configured)' : ''}\n`);
 
   // Setup
-  const connection = new Connection(rpcUrl, 'confirmed');
   const multisigPda = new PublicKey(multisigAddr);
   const vaultAuthority = new PublicKey(vaultAddr);
   const member = loadKeypair(keypairPath);
@@ -140,7 +141,10 @@ async function main() {
   const totalAmount = BigInt(artifact.totalAmount);
 
   // Get token info
-  const mintInfo = await getMint(connection, mint);
+  const mintInfo = await rpc.execute(
+    (connection) => getMint(connection, mint),
+    'getMint'
+  );
   const decimals = mintInfo.decimals;
   const tokenInfo = getTokenByMint(artifact.mint);
   const symbol = tokenInfo?.symbol || 'UNKNOWN';
@@ -170,7 +174,10 @@ async function main() {
   const sourceAta = getAssociatedTokenAddressSync(mint, vaultAuthority, true);
 
   // Check source balance
-  const sourceInfo = await connection.getParsedAccountInfo(sourceAta);
+  const sourceInfo = await rpc.execute(
+    (connection) => connection.getParsedAccountInfo(sourceAta),
+    'getSourceInfo'
+  );
   if (!sourceInfo.value) {
     console.error(`❌ Squad vault has no ATA for ${symbol}`);
     process.exit(1);
@@ -192,9 +199,9 @@ async function main() {
   console.log('-'.repeat(60));
 
   // Fetch current multisig transaction index
-  const multisigInfo = await multisig.accounts.Multisig.fromAccountAddress(
-    connection,
-    multisigPda
+  const multisigInfo = await rpc.execute(
+    (connection) => multisig.accounts.Multisig.fromAccountAddress(connection, multisigPda),
+    'getMultisigInfo'
   );
 
   const nextTransactionIndex = BigInt(Number(multisigInfo.transactionIndex)) + 1n;
@@ -227,13 +234,19 @@ async function main() {
   console.log('     1. Initialize Merkle distribution (set Merkle root on-chain)');
   console.log(`     2. Fund vault with ${fromRawAmount(totalAmount, decimals)} ${symbol}`);
 
-  const { blockhash } = await connection.getLatestBlockhash();
+  const { blockhash } = await rpc.execute(
+    (connection) => connection.getLatestBlockhash(),
+    'getLatestBlockhash'
+  );
 
   const combinedMessage = new TransactionMessage({
     payerKey: vaultAuthority,
     recentBlockhash: blockhash,
     instructions: [initIx, fundIx],  // Initialize first, then fund
   });
+
+  // Use current connection for multisig operations
+  const connection = rpc.connection;
 
   const vaultTxSig = await multisig.rpc.vaultTransactionCreate({
     connection,

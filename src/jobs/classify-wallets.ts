@@ -3,13 +3,12 @@
 // Can be run standalone or imported as a module
 
 import 'dotenv/config';
-import { Connection, PublicKey, SystemProgram } from '@solana/web3.js';
+import { PublicKey, SystemProgram } from '@solana/web3.js';
 import { pool } from '../db';
+import { FailoverConnection, getRpcConfigFromEnv } from '../utils/rpc';
 
-const RPC_URL = process.env.SOLANA_RPC_URL!;
-if (!RPC_URL) throw new Error('Missing SOLANA_RPC_URL');
-
-const connection = new Connection(RPC_URL, 'confirmed');
+const rpcConfig = getRpcConfigFromEnv();
+const rpc = new FailoverConnection(rpcConfig);
 
 export async function classifyWallets(): Promise<{ classified: number; systemOwned: number }> {
   const { rows } = await pool.query<{
@@ -38,7 +37,10 @@ export async function classifyWallets(): Promise<{ classified: number; systemOwn
     console.log(`Fetching account info for ${batch.length} wallets (batch ${Math.floor(i / BATCH_SIZE) + 1})...`);
 
     // Single batched RPC call for up to 100 wallets!
-    const accountInfos = await connection.getMultipleAccountsInfo(pubkeys);
+    const accountInfos = await rpc.execute(
+      (connection) => connection.getMultipleAccountsInfo(pubkeys),
+      'classifyWallets'
+    );
 
     for (let j = 0; j < batch.length; j++) {
       const info = accountInfos[j];

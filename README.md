@@ -104,8 +104,11 @@ Create a local `.env` file:
 # Database
 DATABASE_URL=postgres://user:password@localhost:5432/lst_rewards
 
-# Solana RPC
+# Solana RPC (primary)
 SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
+
+# Backup RPC (optional - automatic failover if primary fails)
+SOLANA_RPC_URL_BACKUP=https://api.mainnet-beta.solana.com
 
 # Token Configuration
 # Primary token being tracked (the LST you're rewarding holders of)
@@ -143,6 +146,12 @@ RELAYER_COMPUTE_PRICE=1000    # Priority fee (micro-lamports)
 - `ELIGIBILITY_TOKEN_MINT`: Optional requirement (leave empty/commented for no requirement)
 - If no eligibility token is set, all primary token holders are eligible
 - `RELAYER_BATCH_SIZE`: Set to 2 for optimal throughput; use 1 if transactions are failing due to size limits
+
+**RPC Failover:**
+- `SOLANA_RPC_URL_BACKUP`: Optional backup RPC endpoint for automatic failover
+- If the primary RPC fails with connection/network errors or rate limiting, the system automatically switches to the backup
+- The system will attempt to recover the primary RPC after 5 minutes
+- Failover events are logged to the console
 
 Secrets and keypairs must **never** be committed.
 

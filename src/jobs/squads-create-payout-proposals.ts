@@ -4,7 +4,6 @@ import assert from "assert";
 
 import * as multisig from "@sqds/multisig";
 import {
-  Connection,
   PublicKey,
   Keypair,
   TransactionMessage,
@@ -16,6 +15,8 @@ import {
   createTransferCheckedInstruction,
   getMint,
 } from "@solana/spl-token";
+
+import { FailoverConnection, getRpcConfigFromEnv } from "../utils/rpc";
 
 type CsvRow = {
   wallet: string;
@@ -62,13 +63,14 @@ function parseCsv(csvPath: string): CsvRow[] {
 async function main() {
   /* -------------------- env -------------------- */
 
-  const rpcUrl = process.env.SOLANA_RPC_URL!;
+  const rpcConfig = getRpcConfigFromEnv();
+  const rpc = new FailoverConnection(rpcConfig);
+
   const multisigAddr = process.env.SQUADS_MULTISIG!;
   const vaultAddr = process.env.SQUAD_VAULT_ADDRESS!;
   const keypairPath = process.env.SQUADS_MEMBER_KEYPAIR!;
   const maxTransfers = Number(process.env.MAX_TRANSFERS_PER_TX ?? "6");
 
-  assert(rpcUrl, "Missing SOLANA_RPC_URL");
   assert(multisigAddr, "Missing SQUADS_MULTISIG");
   assert(vaultAddr, "Missing SQUAD_VAULT_ADDRESS");
   assert(keypairPath, "Missing SQUADS_MEMBER_KEYPAIR");
@@ -82,7 +84,7 @@ async function main() {
 
   /* -------------------- setup -------------------- */
 
-  const connection = new Connection(rpcUrl, "confirmed");
+  console.log(`RPC: ${rpc.getCurrentUrl()}${rpc.hasBackup() ? ' (backup configured)' : ''}`);
   const multisigPda = new PublicKey(multisigAddr);
   const vaultAuthority = new PublicKey(vaultAddr);
   const member = loadKeypair(keypairPath);
@@ -105,7 +107,10 @@ async function main() {
 
   /* -------------------- mint info -------------------- */
 
-  const mintInfo = await getMint(connection, mint);
+  const mintInfo = await rpc.execute(
+    (connection) => getMint(connection, mint),
+    "getMint"
+  );
   const decimals = mintInfo.decimals;
 
   /* -------------------- derive source ATA -------------------- */
@@ -116,8 +121,9 @@ async function main() {
     true // allow owner off curve
   );
 
-  const sourceInfo = await connection.getParsedAccountInfo(
-    sourceTokenAccount
+  const sourceInfo = await rpc.execute(
+    (connection) => connection.getParsedAccountInfo(sourceTokenAccount),
+    "getSourceInfo"
   );
   if (!sourceInfo.value) {
     throw new Error(
@@ -144,7 +150,10 @@ async function main() {
     getAssociatedTokenAddressSync(mint, r.owner, true)
   );
 
-  const ataInfos = await connection.getMultipleAccountsInfo(recipientAtas);
+  const ataInfos = await rpc.execute(
+    (connection) => connection.getMultipleAccountsInfo(recipientAtas),
+    "getAtaInfos"
+  );
 
   /* -------------------- batching -------------------- */
 
@@ -167,14 +176,16 @@ async function main() {
 
   /* -------------------- fetch next tx index -------------------- */
 
-  const multisigInfo =
-    await multisig.accounts.Multisig.fromAccountAddress(
-      connection,
-      multisigPda
-    );
+  const multisigInfo = await rpc.execute(
+    (connection) => multisig.accounts.Multisig.fromAccountAddress(connection, multisigPda),
+    "getMultisigInfo"
+  );
 
   let nextTransactionIndex =
     BigInt(Number(multisigInfo.transactionIndex)) + 1n;
+
+  // Get connection for multisig operations
+  const connection = rpc.connection;
 
   /* -------------------- create proposals -------------------- */
 
